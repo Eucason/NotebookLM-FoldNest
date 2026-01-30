@@ -36,25 +36,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // Get auth token for Google Drive API
     if (request.action === "getAuthToken") {
-        chrome.identity.getAuthToken({ interactive: request.interactive || false }, (token) => {
-            if (chrome.runtime.lastError) {
-                sendResponse({ success: false, error: chrome.runtime.lastError.message });
-            } else {
-                sendResponse({ success: true, token: token });
+        console.log(`[FoldNest BG] 🔑 getAuthToken request, interactive: ${request.interactive}`);
+        (async () => {
+            try {
+                console.log('[FoldNest BG] 🔑 Calling chrome.identity.getAuthToken...');
+                // Use Promise-based API (Chrome 116+)
+                const result = await chrome.identity.getAuthToken({ 
+                    interactive: request.interactive || false 
+                });
+                console.log('[FoldNest BG] ✅ Token received successfully');
+                console.log(`[FoldNest BG] 🔑 Token length: ${result.token?.length || 0} chars`);
+                sendResponse({ success: true, token: result.token });
+            } catch (error) {
+                console.error('[FoldNest BG] ❌ getAuthToken error:', error);
+                console.error('[FoldNest BG] 💡 Error details:');
+                console.error('   - Error name:', error.name);
+                console.error('   - Error message:', error.message);
+                if (error.message?.includes('OAuth2')) {
+                    console.error('[FoldNest BG] 💡 OAuth2 error - check:');
+                    console.error('   1. manifest.json has correct oauth2.client_id');
+                    console.error('   2. Google Cloud Console OAuth client is type "Chrome extension"');
+                    console.error('   3. Extension ID is added to OAuth client');
+                }
+                sendResponse({ success: false, error: error.message || 'Authentication failed' });
             }
-        });
+        })();
         return true;
     }
 
     // Revoke auth token
     if (request.action === "revokeAuthToken") {
-        if (request.token) {
-            chrome.identity.removeCachedAuthToken({ token: request.token }, () => {
-                sendResponse({ success: true });
-            });
-        } else {
-            sendResponse({ success: false, error: "No token provided" });
-        }
+        (async () => {
+            try {
+                if (request.token) {
+                    await chrome.identity.removeCachedAuthToken({ token: request.token });
+                    sendResponse({ success: true });
+                } else {
+                    sendResponse({ success: false, error: "No token provided" });
+                }
+            } catch (error) {
+                console.warn('[FoldNest] revokeAuthToken error:', error);
+                sendResponse({ success: false, error: error.message });
+            }
+        })();
         return true;
     }
 });

@@ -4,7 +4,7 @@
   "version": "0.9.3",
   "description": "Tree-structured folder organization for NotebookLM notebooks and dashboard with Optimized Local Storage and optional Cloud Sync.",
   "author": "Eucason",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtFWIsg9eXxY7yrr51ZeB4Nrr14SdVULW2zTtK8lQzxqWmkQ22k0+1duJCVYJCRTkoq/htuK5o+wTrDQPAiASsz3mVChZnHwTXF3j6sz88X3KWtN9GawCm6P6aL0nyF0Eu2RAhOMS3NlcmHdNJ3N5DQxPDqvlcRHj4d0FUDC9oOETD3AkKSEGA4BM5+rGtelxIv9ayW03xiXDGoQFE4u/aMOfqGAtEcyHgusaLGEN0mSIfE+4W/B80XyzE9KRqFqINIL8Ct9iRB243KzQLICvSHVXKa4ka7ekmHaP0v0JyaYebjX2E+as+LNW4DgOZr57tPnh9LBwrdW9v2C7qu3egwIDAQAB",
+  "key": "YOUR_PUBLIC_KEY_HERE",
   "permissions": [
     "activeTab",
     "scripting",
@@ -18,7 +18,7 @@
     "https://www.googleapis.com/*"
   ],
   "oauth2": {
-    "client_id": "257674484612-8usaj4c45grlod3722m254gr10sefap0.apps.googleusercontent.com",
+    "client_id": "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/drive.appdata"
     ]

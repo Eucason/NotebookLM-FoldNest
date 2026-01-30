@@ -1,0 +1,45 @@
+# Sensitive Configuration Files
+manifest.json
+.env
+.env.local
+.env.production
+
+# Chrome Extension Build Artifacts
+*.crx
+*.pem
+*.zip
+dist/
+build/
+web-ext-artifacts/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# IDE Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS Files
+Thumbs.db
+Desktop.ini
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+
+# Temporary Files
+*.tmp
+*.temp
+.cache/
