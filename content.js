@@ -85,6 +85,7 @@ console.log('[FoldNest] Document ready state:', document.readyState);
  */
 
 // --- CONFIGURATION ---
+// Remote selector configuration (update this URL if you fork or self-host the config)
 const REMOTE_CONFIG_URL = "https://gist.githubusercontent.com/Eucason/f872240d3ba26ea92493b49badc62718/raw/797a2684318db8fe813f6d871ee576d9ecc50a17/notebooklm-selectors.json";
 const DEBUG_MODE = true; // Enabled for debugging
 
@@ -1408,6 +1409,9 @@ function startApp() {
 }
 
 function saveState() {
+    // Guard: Skip if extension context invalidated (happens during dev reload)
+    if (!chrome?.runtime?.id) return;
+    
     try {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
@@ -3757,6 +3761,9 @@ function initDashboard() {
  * Save dashboard state to storage
  */
 function saveDashboardState() {
+    // Guard: Skip if extension context invalidated (happens during dev reload)
+    if (!chrome?.runtime?.id) return;
+    
     try {
         chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
@@ -4907,7 +4914,7 @@ function importDashboardFolders() {
 setupFloatingTaskButton();
 
 // --- NAMESPACE BRIDGE FOR MODULES ---
-// Exposes core functionality for use by other extension modules (e.g., note-popout.js)
+// Exposes core functionality for use by other extension modules (e.g., note-popout.js, sync.js)
 window.NotebookLMFoldNest = {
     // State accessors
     getState: () => appState,
@@ -4944,6 +4951,75 @@ window.NotebookLMFoldNest = {
             hooks.forEach(fn => {
                 try { fn(...args); } catch (e) { console.debug('[NotebookLM FoldNest] Hook error:', e); }
             });
+        }
+    },
+
+    // ADDED: Apply synced state without page reload
+    // @param {object} newState - The new state object from cloud sync (includes _syncMeta)
+    // @param {string} context - 'notebook' or 'dashboard'
+    // @returns {boolean} - true on success, false on failure (caller should reload as fallback)
+    applyState: (newState, context = 'notebook') => {
+        try {
+            console.log('[NotebookLM FoldNest] applyState called, context:', context);
+
+            if (!newState || typeof newState !== 'object') {
+                console.warn('[NotebookLM FoldNest] applyState: Invalid state provided');
+                return false;
+            }
+
+            if (context === 'dashboard') {
+                // DASHBOARD CONTEXT: Apply to dashboardState
+                // Simple merge for v1 (Object.assign)
+                dashboardState = Object.assign({}, dashboardState || DEFAULT_DASHBOARD_STATE, newState);
+
+                // Save locally (will trigger upload debounce if sync enabled)
+                saveDashboardState();
+
+                // Delayed render/process to let DOM settle
+                setTimeout(() => {
+                    try {
+                        renderDashboardTree();
+                        processDashboardNotebooks();
+                        showToast('Dashboard synced from cloud ✓', 'success');
+                        console.log('[NotebookLM FoldNest] Dashboard state applied successfully');
+                    } catch (renderErr) {
+                        console.error('[NotebookLM FoldNest] Dashboard render failed after applyState:', renderErr);
+                    }
+                }, 400); // 400ms delay for DOM readiness
+
+                return true;
+
+            } else {
+                // NOTEBOOK CONTEXT: Apply to appState
+                // Simple merge for v1 (Object.assign)
+                appState = Object.assign({}, appState, newState);
+
+                // Save locally (will trigger upload debounce if sync enabled)
+                saveState();
+
+                // Delayed render/process to let DOM settle
+                setTimeout(() => {
+                    try {
+                        // Re-render both source and studio trees
+                        renderTree('source');
+                        renderTree('studio');
+
+                        // Re-process items (proxies, checkboxes, etc.)
+                        safeProcessItems('source');
+                        safeProcessItems('studio');
+
+                        showToast('Synced from cloud ✓', 'success');
+                        console.log('[NotebookLM FoldNest] Notebook state applied successfully');
+                    } catch (renderErr) {
+                        console.error('[NotebookLM FoldNest] Notebook render failed after applyState:', renderErr);
+                    }
+                }, 400); // 400ms delay for DOM readiness
+
+                return true;
+            }
+        } catch (e) {
+            console.error('[NotebookLM FoldNest] applyState failed:', e);
+            return false; // Caller should fall back to reload
         }
     }
 };

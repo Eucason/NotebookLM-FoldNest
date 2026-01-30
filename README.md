@@ -275,6 +275,74 @@ The Notebook View operates within individual notebooks, providing granular organ
 ### Method 2: Chrome Web Store (Future)
 *Coming soon - pending review process*
 
+### Method 3: Developer Setup (For Contributors/Forkers)
+
+⚠️ **Important**: The repository does NOT include `manifest.json` with real credentials. You must generate it from the template.
+
+**Prerequisites**:
+- Node.js installed (for build script)
+- Google Cloud Console project with OAuth2 credentials
+
+**Step-by-Step Setup**:
+
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/Eucason/notebooklm-foldnest.git
+   cd notebooklm-foldnest
+   ```
+
+2. **Create OAuth2 Credentials**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing one
+   - Enable **Google Drive API**
+   - Navigate to **Credentials** → **Create Credentials** → **OAuth client ID**
+   - Application type: **Chrome Extension**
+   - Add your extension ID to **Authorized JavaScript origins**
+   - Copy the **Client ID**
+
+3. **Get Your Extension Public Key**:
+   - Load the extension unpacked in Chrome (`chrome://extensions`)
+   - Copy the **Extension ID** (looks like: `abcdefghijklmnopqrstuvwxyz123456`)
+   - Go back to **Credentials** and add this ID to authorized origins
+   - Generate a public key OR let Chrome auto-generate one (remove `key` field from template)
+
+4. **Configure Environment Variables**:
+   ```bash
+   # Copy the example file
+   cp .env.example .env
+   
+   # Edit .env and fill in your credentials:
+   # EXTENSION_KEY=MIIBIjAN... (your public key)
+   # OAUTH_CLIENT_ID=123456789-abc...apps.googleusercontent.com
+   ```
+
+5. **Generate manifest.json**:
+   ```bash
+   node build-manifest.js
+   ```
+   
+   You should see:
+   ```
+   ✅ manifest.json generated successfully!
+   ```
+
+6. **Load Extension in Chrome**:
+   - Go to `chrome://extensions`
+   - Enable Developer mode
+   - Click "Load unpacked" and select this directory
+   - The extension should now have cloud sync capabilities!
+
+**Security Notes**:
+- ⚠️ **NEVER commit `.env` or `manifest.json` to version control**
+- The `.gitignore` file already excludes these
+- Only commit `manifest.json.template` and `.env.example`
+- Rotate credentials if accidentally exposed
+
+**Troubleshooting**:
+- If OAuth fails: Check that extension ID matches Google Cloud Console configuration
+- If build fails: Ensure `.env` has valid values (no placeholders like `YOUR_CLIENT_ID_HERE`)
+- If quota errors: You may have exceeded Google Drive API limits (100 requests/100 seconds)
+
 ---
 
 ## 📖 Usage Guide

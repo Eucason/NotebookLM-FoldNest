@@ -1719,6 +1719,18 @@ body.plugin-sidebar-open .mat-sidenav-container {
     background: #ea4335; /* Red - error */
 }
 
+.foldnest-sync-status.offline {
+    background: #9e9e9e; /* Gray - offline */
+}
+
+.foldnest-sync-btn.offline {
+    opacity: 0.6;
+}
+
+.foldnest-sync-btn.offline svg {
+    color: #9e9e9e;
+}
+
 .foldnest-sync-menu {
     min-width: 160px;
 }
