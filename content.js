@@ -4248,13 +4248,15 @@ function processDashboardNotebooks() {
  * Add a "move to folder" button to a notebook card
  */
 /**
- * Add a "move to folder" button to a notebook card
+ * Add a "move to folder" button to a notebook card (Grid view only)
  */
 function addFolderButtonToCard(card, notebookId, title) {
     try {
         if (card.querySelector('.plugin-add-to-folder-btn')) return;
 
-        const isList = isListView();
+        // Only add button in Grid view, skip List view
+        if (isListView()) return;
+
         const notebookUrl = getNotebookFullUrl(card);
         if (!notebookUrl) return;
 
@@ -4274,84 +4276,38 @@ function addFolderButtonToCard(card, notebookId, title) {
             }
         }, [getIconElement('addToFolder')]);
 
-        // Style based on view
-        if (isList) {
-            // List view: Insert into the actions column of the table row
-            // NotebookLM uses td.mat-column-actions or .actions-column
-            const actionsCell = card.querySelector('td.mat-column-actions, .actions-column, td:last-child, .cdk-column-actions');
+        // Grid view: Absolute positioning in corner
+        Object.assign(btn.style, {
+            position: 'absolute',
+            top: '12px',
+            right: '12px',
+            zIndex: '50',
+            background: 'var(--plugin-bg-input, white)',
+            border: '1px solid var(--plugin-border-light, #e0e0e0)',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+            borderRadius: '50%',
+            width: '32px',
+            height: '32px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            opacity: '0',
+            transition: 'opacity 0.2s, transform 0.2s',
+            color: 'var(--plugin-icon-color)'
+        });
 
-            Object.assign(btn.style, {
-                background: 'transparent',
-                border: 'none',
-                width: '28px',
-                height: '28px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                opacity: '0',
-                transition: 'opacity 0.2s, background 0.2s',
-                color: 'var(--plugin-icon-color)',
-                borderRadius: '4px',
-                marginRight: '8px',
-                padding: '4px'
-            });
-
-            if (actionsCell) {
-                // Insert at beginning of actions cell
-                actionsCell.insertBefore(btn, actionsCell.firstChild);
-                actionsCell.style.display = 'flex';
-                actionsCell.style.alignItems = 'center';
-                actionsCell.style.gap = '4px';
-            } else {
-                // Fallback: append to the row itself
-                card.style.position = 'relative';
-                btn.style.position = 'absolute';
-                btn.style.right = '48px';
-                btn.style.top = '50%';
-                btn.style.transform = 'translateY(-50%)';
-                card.appendChild(btn);
-            }
-        } else {
-            // Grid view: Absolute positioning in corner
-            Object.assign(btn.style, {
-                position: 'absolute',
-                top: '12px',
-                right: '12px',
-                zIndex: '50',
-                background: 'var(--plugin-bg-input, white)',
-                border: '1px solid var(--plugin-border-light, #e0e0e0)',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-                borderRadius: '50%',
-                width: '32px',
-                height: '32px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                opacity: '0',
-                transition: 'opacity 0.2s, transform 0.2s',
-                color: 'var(--plugin-icon-color)'
-            });
-
-            if (getComputedStyle(card).position === 'static') {
-                card.style.position = 'relative';
-            }
-            card.appendChild(btn);
+        if (getComputedStyle(card).position === 'static') {
+            card.style.position = 'relative';
         }
+        card.appendChild(btn);
 
-        // Hover handling for both views
+        // Hover handling
         card.addEventListener('mouseenter', () => btn.style.opacity = '1');
         card.addEventListener('mouseleave', () => btn.style.opacity = '0');
 
-        btn.onmouseenter = () => {
-            if (!isList) btn.style.transform = 'scale(1.1)';
-            else btn.style.backgroundColor = 'var(--plugin-bg-hover)';
-        };
-        btn.onmouseleave = () => {
-            if (!isList) btn.style.transform = 'scale(1)';
-            else btn.style.backgroundColor = 'transparent';
-        };
+        btn.onmouseenter = () => btn.style.transform = 'scale(1.1)';
+        btn.onmouseleave = () => btn.style.transform = 'scale(1)';
 
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Add folder button error:', e.message);
