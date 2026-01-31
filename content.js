@@ -4149,90 +4149,216 @@ function buildDashboardFolderNode(folder, allFolders) {
 }
 
 /**
+ * Resolve the correct dashboard container for a notebook element.
+ * Ensures list-view rows are hidden even when the card is just a link.
+ */
+function resolveDashboardItemContainer(card) {
+    try {
+        if (!card) return { container: card, isListRow: false };
+
+        const rowContainer = card.closest('tr.mat-mdc-row, .mat-mdc-row, [role="row"], .mdc-data-table__row');
+        if (rowContainer) {
+            return { container: rowContainer, isListRow: true };
+        }
+
+        const gridContainer = card.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item, mat-card, .mat-mdc-card');
+        if (gridContainer) {
+            return { container: gridContainer, isListRow: false };
+        }
+
+        const isRow = card.tagName === 'TR' || card.classList.contains('mat-mdc-row');
+        return { container: card, isListRow: isRow };
+    } catch (e) {
+        console.debug('[NotebookLM FoldNest] resolveDashboardItemContainer error:', e.message);
+        return { container: card, isListRow: false };
+    }
+}
+
+/**
+ * Normalize a notebook title for comparison - strips ALL emojis and extra whitespace
+ * Uses Unicode property escapes to match any emoji (covers all current and future emojis)
+ */
+function normalizeNotebookTitle(title) {
+    if (!title) return '';
+    return title
+        // Remove ALL emojis using Unicode property escapes (ES2018+)
+        // \p{Emoji_Presentation} - emojis displayed as emoji by default
+        // \p{Extended_Pictographic} - pictographs including future additions
+        .replace(/\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu, '')
+        // Remove variation selectors and zero-width joiners used in emoji sequences
+        .replace(/[\u{FE0F}\u{FE0E}\u{200D}]/gu, '')
+        // Normalize whitespace (multiple spaces to single, trim)
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
  * Process notebooks on the dashboard - create proxies and hide originals if mapped
  * Supports both Grid View (mat-card) and List View (mat-mdc-row) structures
+ * 
+ * CRITICAL: List View rows don't contain URLs - only titles. We must match by title.
  */
 function processDashboardNotebooks() {
     try {
-        // Get notebook elements - works for both Grid and List views
-        let notebookCards = safeQueryAll(document, activeSelectors.notebookCard);
-
-        // Also check for List View rows
-        // Also check for List View rows (skip header row which has no link)
-        const listViewRows = document.querySelectorAll('.mat-mdc-row:not(.plugin-dashboard-processed)');
-        if (listViewRows.length > 0) {
-            // Filter to only notebook rows (have links to /notebook/)
-            const validRows = Array.from(listViewRows).filter(row => {
-                const link = row.querySelector('a[href*="/notebook/"]');
-                return !!link;
-            });
-            // Combine with existing cards
-            notebookCards = [...Array.from(notebookCards), ...validRows];
+        // BUILD TITLE->FOLDER LOOKUP from existing mappings
+        // This is critical because List View rows don't have URLs, only titles
+        const titleToFolderMap = {};
+        
+        // Scan Grid View cards to build title-to-folder mappings
+        const gridCards = document.querySelectorAll('mat-card:not(.create-new-action-button), .project-tile');
+        gridCards.forEach(card => {
+            const url = getNotebookFullUrl(card);
+            if (url && dashboardState.mappings[url]) {
+                const title = getNotebookTitleFromCard(card);
+                if (title && title !== 'Untitled') {
+                    const normalizedTitle = normalizeNotebookTitle(title);
+                    titleToFolderMap[normalizedTitle] = {
+                        folderId: dashboardState.mappings[url],
+                        notebookId: getNotebookIdFromCard(card),
+                        url: url
+                    };
+                }
+            }
+        });
+        
+        // Also build from mappings directly using stored titles (for when grid isn't visible)
+        Object.entries(dashboardState.mappings || {}).forEach(([url, folderId]) => {
+            // Extract notebook ID from URL
+            const match = url.match(/\/notebook\/([^\/\?]+)/);
+            if (match) {
+                const notebookId = match[1];
+                // Check if we have a cached title for this
+                const existingProxy = document.querySelector(`.plugin-proxy-item[data-notebook-id="${notebookId}"]`);
+                if (existingProxy) {
+                    const title = existingProxy.dataset.title;
+                    const normalizedTitle = normalizeNotebookTitle(title);
+                    if (normalizedTitle && !titleToFolderMap[normalizedTitle]) {
+                        titleToFolderMap[normalizedTitle] = { folderId, notebookId, url };
+                    }
+                }
+            }
+        });
+        
+        if (DEBUG_MODE && Object.keys(titleToFolderMap).length > 0) {
+            console.log('[FoldNest] Title-to-Folder map:', Object.keys(titleToFolderMap));
         }
 
-        notebookCards.forEach(card => {
-            // Mark as processed to prevent duplicates/loops
-            if (card.classList.contains('plugin-dashboard-processed')) return;
-            card.classList.add('plugin-dashboard-processed');
+        // PROCESS LIST VIEW ROWS SEPARATELY (they don't have URLs, only titles)
+        const listViewRows = document.querySelectorAll('.mat-mdc-row:not(.plugin-dashboard-processed)');
+        
+        if (DEBUG_MODE) {
+            console.log(`[FoldNest] Found ${listViewRows.length} list view rows to process`);
+        }
 
-            // Skip the "Create new" card
+        listViewRows.forEach(row => {
+            if (row.classList.contains('plugin-dashboard-processed')) return;
+            
+            // Get title from the row
+            const titleSpan = row.querySelector('.project-table-title');
+            if (!titleSpan) {
+                row.classList.add('plugin-dashboard-processed');
+                return;
+            }
+            
+            const rawTitle = titleSpan.textContent.trim();
+            const normalizedTitle = normalizeNotebookTitle(rawTitle);
+            const mappingInfo = titleToFolderMap[normalizedTitle];
+            
+            if (DEBUG_MODE) {
+                console.log(`[FoldNest] List Row: "${rawTitle}" (normalized: "${normalizedTitle}") -> ${mappingInfo ? 'MAPPED' : 'NOT MAPPED'}`);
+            }
+            
+            row.classList.add('plugin-dashboard-processed');
+            
+            if (mappingInfo && dashboardState.folders[mappingInfo.folderId]) {
+                // HIDE the row - notebook is in a folder
+                row.style.setProperty('display', 'none', 'important');
+                row.style.visibility = 'hidden';
+                row.classList.add('plugin-hidden-list-item');
+                row.setAttribute('aria-hidden', 'true');
+                
+                if (DEBUG_MODE) console.log(`[FoldNest] ✓ HIDING list row: "${rawTitle}"`);
+            } else {
+                // Ensure row is visible if not mapped
+                if (row.classList.contains('plugin-hidden-list-item')) {
+                    row.style.removeProperty('display');
+                    row.style.visibility = '';
+                    row.classList.remove('plugin-hidden-list-item');
+                    row.removeAttribute('aria-hidden');
+                }
+            }
+        });
+
+        // PROCESS GRID VIEW CARDS (existing logic - these have URLs)
+        let notebookCards = safeQueryAll(document, activeSelectors.notebookCard);
+
+        notebookCards.forEach(card => {
+            const resolved = resolveDashboardItemContainer(card);
+            const containerEl = resolved.container || card;
+
+            // Skip if already processed or is a list row (handled above)
+            if (containerEl.classList.contains('plugin-dashboard-processed')) return;
+            if (resolved.isListRow) return; // List rows handled separately
+            
+            containerEl.classList.add('plugin-dashboard-processed');
+            if (containerEl !== card) {
+                card.classList.add('plugin-dashboard-processed');
+            }
+
             if (card.classList.contains('create-new-action-button')) return;
 
             const notebookUrl = getNotebookFullUrl(card);
-            if (!notebookUrl) {
-                return;
-            }
+            if (!notebookUrl) return;
 
-            const notebookId = getNotebookIdFromCard(card); // Keep for backwards compat if needed elsewhere
-
-            // CRITICAL FIX: Extract and cache title BEFORE any operations
-            // This ensures the title is captured while the card is still visible and accessible
+            const notebookId = getNotebookIdFromCard(card);
             const title = getNotebookTitleFromCard(card);
+            const normalizedTitle = normalizeNotebookTitle(title);
 
-            // Store title in card's dataset for persistence
             if (card.dataset) {
                 card.dataset.pluginNotebookTitle = title;
             }
 
-            const folderId = dashboardState.mappings[notebookUrl];
+            // Look up folder mapping - check by URL first
+            let folderId = dashboardState.mappings[notebookUrl];
+            
+            if (!folderId) {
+                const altUrl = notebookUrl.endsWith('/') ? notebookUrl.slice(0, -1) : notebookUrl + '/';
+                folderId = dashboardState.mappings[altUrl];
+            }
 
-            // Add the "add to folder" button to the card (id-based is fine for the button itself if needed)
+            if (!folderId && notebookId) {
+                const mappedEntry = Object.entries(dashboardState.mappings).find(([url]) => url.includes(notebookId));
+                if (mappedEntry) folderId = mappedEntry[1];
+            }
+
+            // BIDIRECTIONAL SYNC: Also check by normalized title (for items added from List View)
+            if (!folderId && normalizedTitle && titleToFolderMap[normalizedTitle]) {
+                folderId = titleToFolderMap[normalizedTitle].folderId;
+                if (DEBUG_MODE) console.log(`[FoldNest] Grid card matched by title: "${normalizedTitle}" -> ${folderId}`);
+            }
+
+            // Add folder button to grid cards
             addFolderButtonToCard(card, notebookId, title);
 
-            // PROXY CLEANUP: Remove any existing proxies for this notebook first
-            // This prevents duplicates if moved between folders or removed
+            // Clean up proxies if folder changed
             const existingProxies = document.querySelectorAll(`.plugin-proxy-item[data-notebook-id="${notebookId}"]`);
             existingProxies.forEach(p => {
                 const pFolderId = p.parentElement?.dataset?.folderId;
-                if (pFolderId !== folderId) {
-                    p.remove();
-                }
+                if (pFolderId !== folderId) p.remove();
             });
 
-            // Handle visibility based on folder mapping
+            // Handle visibility
             if (folderId && dashboardState.folders[folderId]) {
-                // BUG FIX: Hide the parent wrapper/tile to prevent blank spaces in grid
-                const gridItem = card.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || card.parentElement || card;
-
-                gridItem.style.display = 'none';
-                gridItem.style.visibility = 'hidden';
-                gridItem.classList.add('plugin-hidden-grid-item');
-
-                // Backup for robust unhiding
-                if (gridItem !== card) {
-                    // Mark the card itself too just in case
-                    card.dataset.pluginHidden = 'true';
-                }
-
+                containerEl.style.display = 'none';
+                containerEl.style.visibility = 'hidden';
+                containerEl.classList.add('plugin-hidden-grid-item');
+                
                 addNotebookToFolderView(notebookId, title, folderId, card);
             } else {
-                // Ensure visible if NOT mapped
-                const gridItem = card.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || card.parentElement || card;
-
-                if (gridItem.style.display === 'none' || gridItem.classList.contains('plugin-hidden-grid-item')) {
-                    gridItem.style.display = '';
-                    gridItem.style.visibility = '';
-                    gridItem.classList.remove('plugin-hidden-grid-item');
+                if (containerEl.classList.contains('plugin-hidden-grid-item')) {
+                    containerEl.style.display = '';
+                    containerEl.style.visibility = '';
+                    containerEl.classList.remove('plugin-hidden-grid-item');
                 }
             }
 
@@ -4351,10 +4477,19 @@ function addNotebookToFolderView(notebookId, title, folderId, originalCard) {
 
                     // Show original card again (restore grid item)
                     if (originalCard) {
-                        const gridItem = originalCard.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || originalCard.parentElement || originalCard;
-                        gridItem.style.display = '';
-                        gridItem.style.visibility = '';
-                        gridItem.classList.remove('plugin-hidden-grid-item');
+                        let itemToRestore = originalCard;
+                        if (originalCard.classList.contains('mat-mdc-row')) {
+                            itemToRestore = originalCard;
+                        } else {
+                            itemToRestore = originalCard.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || originalCard.parentElement || originalCard;
+                            if (itemToRestore.tagName === 'TBODY' || itemToRestore.tagName === 'TABLE') {
+                                itemToRestore = originalCard;
+                            }
+                        }
+
+                        itemToRestore.style.display = '';
+                        itemToRestore.style.visibility = '';
+                        itemToRestore.classList.remove('plugin-hidden-grid-item');
                         originalCard.classList.remove('plugin-dashboard-processed'); // trigger re-process
                     }
 

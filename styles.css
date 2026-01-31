@@ -1,4 +1,4 @@
-/* --- THEME VARIABLES --- */
+﻿/* --- THEME VARIABLES --- */
 /* --- THEME VARIABLES --- */
 :root {
     /* 1. DEFAULT (Assumes Light Mode) */
@@ -43,6 +43,11 @@ body.dark-theme {
 }
 
 .plugin-hidden-grid-item {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+.plugin-hidden-list-item {
     display: none !important;
     visibility: hidden !important;
 }
@@ -486,7 +491,7 @@ body.plugin-sidebar-open .mat-drawer-container {
 }
 
 .plugin-proxy-item[data-match-type="fuzzy"] .proxy-text::after {
-    content: " Ã¢â€°Ë†";
+    content: " ÃƒÂ¢Ã¢â‚¬Â°Ã‹â€ ";
     font-weight: bold;
     color: var(--plugin-text-secondary);
     margin-left: 4px;
@@ -1744,4 +1749,8 @@ body.plugin-sidebar-open .mat-sidenav-container {
     .plugin-dashboard-notebook {
         padding: 8px 10px;
     }
+}. p l u g i n - h i d d e n - l i s t - i t e m   { 
+
+.plugin-hidden-list-item {
+    display: none !important;
 }
