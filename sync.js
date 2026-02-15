@@ -547,13 +547,8 @@
                 };
 
                 if (type === 'dashboard') {
-                    // Update local _syncMeta to match the upload timestamp so the next
-                    // sync check doesn't see remote as newer and do a pointless download.
-                    const result = await chrome.storage.local.get(['notebookLM_dashboardFolders']);
-                    if (result['notebookLM_dashboardFolders']) {
-                        const updated = { ...result['notebookLM_dashboardFolders'], _syncMeta: syncMeta };
-                        await chrome.storage.local.set({ 'notebookLM_dashboardFolders': updated });
-                    }
+                    // _syncMeta is already maintained by saveDashboardState() in content.js
+                    // No need to re-read and re-write here — avoids stale read-modify-write race
                 } else {
                     // Same for notebook state
                     const match = window.location.pathname.match(/\/notebook\/([^\/\?]+)/);
