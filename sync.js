@@ -432,11 +432,14 @@
                 metadata.parents = ['appDataFolder'];
             }
 
+            // Capture the upload timestamp before uploading
+            const uploadTimestamp = Date.now();
+
             // Add sync metadata
             const contentWithMeta = {
                 ...content,
                 _syncMeta: {
-                    lastModified: Date.now(),
+                    lastModified: uploadTimestamp,
                     version: '1.0.0'
                 }
             };
@@ -458,10 +461,11 @@
                 throw new Error(`HTTP ${response.status}`);
             }
 
-            return true;
+            // Return both success status and upload timestamp
+            return { success: true, uploadTimestamp };
         } catch (e) {
             console.error('[FoldNest Sync] Upload failed:', e);
-            return false;
+            return { success: false };
         }
     }
 
@@ -537,21 +541,35 @@
             const existingFile = await findFile(fileName);
 
             // Upload
-            const success = await uploadFile(fileName, state, existingFile?.id);
+            const uploadResult = await uploadFile(fileName, state, existingFile?.id);
 
-            if (success) {
-                // Update local storage with sync metadata to prevent reload loops
+            if (uploadResult.success) {
+                // Update local storage with the upload timestamp to prevent unnecessary downloads
                 const syncMeta = {
-                    lastModified: now,
+                    lastModified: uploadResult.uploadTimestamp,
                     version: '1.0.0'
                 };
 
                 if (type === 'dashboard') {
-                    // _syncMeta is now maintained by saveDashboardState() in content.js,
-                    // so we don't need to re-save it here after upload.
+                    // Update dashboard state in local storage with upload timestamp
+                    const updatedState = {
+                        ...state,
+                        _syncMeta: syncMeta
+                    };
+                    await chrome.storage.local.set({ 'notebookLM_dashboardFolders': updatedState });
                 } else {
-                    // _syncMeta is now maintained by saveState() in content.js,
-                    // so we don't need to re-save it here after upload.
+                    // Update notebook state in local storage with upload timestamp
+                    // Extract notebook ID from URL to construct storage key
+                    const match = window.location.pathname.match(/\/notebook\/([^\/\?]+)/);
+                    if (match) {
+                        const notebookId = match[1];
+                        const stateKey = `notebookTreeState_${notebookId}`;
+                        const updatedState = {
+                            ...state,
+                            _syncMeta: syncMeta
+                        };
+                        await chrome.storage.local.set({ [stateKey]: updatedState });
+                    }
                 }
 
                 syncSettings.lastSyncTime = now;
@@ -562,7 +580,7 @@
                 updateSyncStatus('error', 'Upload failed');
             }
 
-            return success;
+            return uploadResult.success;
         } catch (e) {
             console.error('[FoldNest Sync] Upload error:', e);
             updateSyncStatus('error', e.message);
