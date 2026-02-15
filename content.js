@@ -198,6 +198,8 @@ const DEFAULT_SELECTORS = {
         '[data-test-id="notebook-item"]'
     ],
     notebookCardTitle: [
+        '.project-button-title',
+        '.featured-project-title',
         '.project-title',
         '.tile-title',
         '.mat-mdc-card-title',
@@ -3999,9 +4001,7 @@ function initDashboard() {
             if (!dashboardState.pinned) dashboardState.pinned = [];
             if (!dashboardState.settings) dashboardState.settings = { foldersOpen: true };
 
-            if (dashboardState.folders) {
-                Object.values(dashboardState.folders).forEach(f => f.isOpen = false);
-            }
+            // Note: folder isOpen state is preserved from storage (no longer forced closed on init)
 
             console.debug('[NotebookLM FoldNest] Dashboard state loaded');
 
@@ -5251,51 +5251,33 @@ window.NotebookLMFoldNest = {
  */
 function getCanonicalNotebookUrl(card) {
     if (!card) return null;
-    const link = card.querySelector('a[href*="/notebook/"]');
-    if (!link) return null;
-    try {
-        const url = new URL(link.href, window.location.origin);
-        // Canonicalize: remove query params and hash, remove trailing slash
-        const path = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
-        return url.origin + path;
-    } catch (e) {
-        return null;
+
+    // Strategy 1: Try to find a direct <a> link (legacy NotebookLM DOM)
+    const link = (card.tagName === 'A' && card.href && card.href.includes('/notebook/'))
+        ? card
+        : card.querySelector('a[href*="/notebook/"]')
+        || card.closest('a[href*="/notebook/"]');
+    if (link) {
+        try {
+            const url = new URL(link.href, window.location.origin);
+            const path = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
+            return url.origin + path;
+        } catch (e) { /* fall through */ }
     }
+
+    // Strategy 2: Construct URL from extracted notebook ID (current NotebookLM DOM)
+    // NotebookLM no longer uses <a> links for notebook cards — navigation is button-based.
+    // The notebook UUID is embedded in aria-labelledby / element id attributes.
+    const notebookId = getNotebookIdFromCard(card);
+    if (notebookId) {
+        return window.location.origin + '/notebook/' + notebookId;
+    }
+
+    return null;
 }
 
-/**
- * Safely extracts the notebook ID from its card.
- * @param {HTMLElement} card 
- * @returns {string|null}
- */
-function getNotebookIdFromCard(card) {
-    if (!card) return null;
-    // Try data attribute first
-    if (card.dataset.notebookId) return card.dataset.notebookId;
-
-    // Fallback to URL parsing
-    const url = getCanonicalNotebookUrl(card);
-    if (!url) return null;
-    const match = url.match(/\/notebook\/([^\/]+)/);
-    return match ? match[1] : null;
-}
-
-/**
- * Safely extracts the notebook title from its card.
- * @param {HTMLElement} card 
- * @returns {string}
- */
-function getNotebookTitleFromCard(card) {
-    if (!card) return "Untitled Notebook";
-    // Try reliable selectors based on current DOM
-    const titleEl = card.querySelector('.project-title, .tile-title, .mat-mdc-card-title, h3');
-    if (titleEl) return titleEl.innerText.trim();
-
-    // Fallback to aria-label
-    const ariaLabel = card.getAttribute('aria-label');
-    if (ariaLabel) return ariaLabel.trim();
-
-    return "Untitled Notebook";
-}
+// NOTE: getNotebookIdFromCard is defined at line ~1058 (robust version with tagName, parent, data-attr checks)
+// NOTE: getNotebookTitleFromCard is defined at line ~1169 (robust version with caching, list-view, and fallbacks)
+// Duplicate definitions were removed here to prevent shadowing the robust implementations above.
 
 init();
