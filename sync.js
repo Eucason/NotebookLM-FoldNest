@@ -543,7 +543,7 @@
             // Upload
             const uploadResult = await uploadFile(fileName, state, existingFile?.id);
 
-            if (uploadResult.success) {
+            if (uploadResult.success && uploadResult.uploadTimestamp) {
                 // Update local storage with the upload timestamp to prevent unnecessary downloads
                 const syncMeta = {
                     lastModified: uploadResult.uploadTimestamp,
