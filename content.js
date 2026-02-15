@@ -273,6 +273,7 @@ const DEFAULT_DASHBOARD_STATE = {
     folders: {},           // { folderId: { id, name, parentId, order, isOpen, color } }
     mappings: {},          // { notebookId: folderId }
     pinned: [],            // pinned notebook IDs
+    titleCache: {},        // { notebookUrl: title } - persists titles across tab switches
     settings: {
         foldersOpen: true  // whether folder section is expanded
     }
@@ -4000,6 +4001,7 @@ function initDashboard() {
             if (!dashboardState.mappings) dashboardState.mappings = {};
             if (!dashboardState.pinned) dashboardState.pinned = [];
             if (!dashboardState.settings) dashboardState.settings = { foldersOpen: true };
+            if (!dashboardState.titleCache) dashboardState.titleCache = {};
 
             // Note: folder isOpen state is preserved from storage (no longer forced closed on init)
 
@@ -4462,6 +4464,11 @@ function processDashboardNotebooks() {
             // This ensures the title is captured while the card is still visible and accessible
             const title = getNotebookTitleFromCard(card);
 
+            // Cache the title so it persists across tab switches
+            if (title && notebookUrl && title !== notebookUrl) {
+                dashboardState.titleCache[notebookUrl] = title;
+            }
+
             // Store title in card's dataset for persistence
             if (card.dataset) {
                 card.dataset.pluginNotebookTitle = title;
@@ -4479,6 +4486,13 @@ function processDashboardNotebooks() {
                 const pFolderId = p.parentElement?.dataset?.folderId;
                 if (pFolderId !== folderId) {
                     p.remove();
+                } else if (title) {
+                    // Update title on same-folder proxy (may have fallback title from restoreMappedNotebooks)
+                    const titleEl = p.querySelector('.proxy-title');
+                    if (titleEl && titleEl.textContent !== title) {
+                        titleEl.textContent = title;
+                    }
+                    if (p.dataset) p.dataset.title = title;
                 }
             });
 
@@ -4512,8 +4526,44 @@ function processDashboardNotebooks() {
             card.classList.add('plugin-dashboard-processed');
         });
 
+        // Restore proxies for notebooks mapped to folders but not visible in current tab
+        restoreMappedNotebooks();
+
+        // Persist title cache for future loads
+        saveDashboardState();
+
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Process dashboard notebooks error:', e.message);
+    }
+}
+
+/**
+ * Restore proxy items for notebooks that are mapped to folders but not
+ * currently visible in the DOM (e.g. user is on Featured tab but notebook
+ * is from My Notebooks). Uses the persisted titleCache for display names.
+ */
+function restoreMappedNotebooks() {
+    try {
+        const mappings = dashboardState.mappings || {};
+        Object.entries(mappings).forEach(([notebookUrl, folderId]) => {
+            if (!folderId || !dashboardState.folders[folderId]) return;
+
+            // Extract notebook ID from URL
+            const match = notebookUrl.match(/\/notebook\/([^/]+)$/);
+            if (!match) return;
+            const notebookId = match[1];
+
+            // Skip if proxy already exists (card was in the DOM and already processed)
+            if (document.querySelector(`.plugin-proxy-item[data-notebook-id="${notebookId}"]`)) return;
+
+            // Use cached title, fall back to truncated ID
+            const title = (dashboardState.titleCache && dashboardState.titleCache[notebookUrl])
+                || `Notebook ${notebookId.slice(0, 8)}\u2026`;
+
+            addNotebookToFolderView(notebookId, title, folderId, null);
+        });
+    } catch (e) {
+        console.debug('[NotebookLM FoldNest] Restore mapped notebooks error:', e.message);
     }
 }
 
@@ -4598,8 +4648,19 @@ function addNotebookToFolderView(notebookId, title, folderId, originalCard) {
         const itemsMount = document.querySelector(`.plugin-dashboard-folder-items[data-folder-id="${folderId}"]`);
         if (!itemsMount) return;
 
-        // Check if already added
-        if (itemsMount.querySelector(`[data-notebook-id="${notebookId}"]`)) return;
+        // Check if already added — if so, update title and return
+        const existingProxy = itemsMount.querySelector(`[data-notebook-id="${notebookId}"]`);
+        if (existingProxy) {
+            // Update title if we now have a better one (e.g. from a real card vs fallback ID)
+            if (title) {
+                const titleEl = existingProxy.querySelector('.proxy-title');
+                if (titleEl && titleEl.textContent !== title) {
+                    titleEl.textContent = title;
+                }
+                if (existingProxy.dataset) existingProxy.dataset.title = title;
+            }
+            return;
+        }
 
         const proxy = createEl('div', {
             className: 'plugin-proxy-item plugin-dashboard-notebook',
