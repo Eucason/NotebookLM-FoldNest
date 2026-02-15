@@ -3508,54 +3508,66 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
 
     let iconElement;
     if (context === 'source') {
-        const allIcons = nativeRow.querySelectorAll('mat-icon');
-        let nativeIcon = null;
-        const fileTypeIcons = ['drive_pdf', 'article', 'description', 'insert_drive_file',
-            'link', 'video_library', 'audio_file', 'image', 'folder',
-            'text_snippet', 'code', 'table_chart'];
+        // [FIX v0.9.4] Check for favicon images FIRST (web sources use img, not mat-icon)
+        const nativeImg = nativeRow.querySelector('img.source-item-source-icon, img.favicon-icon');
 
-        for (const icon of allIcons) {
-            const iconName = (icon.textContent || icon.innerText || '').trim();
-            if (iconName === 'more_vert' || iconName === 'more_horiz' ||
-                iconName === 'close' || iconName === 'check' || iconName === 'edit') {
-                continue;
-            }
-            if (fileTypeIcons.includes(iconName) || !nativeIcon) {
-                nativeIcon = icon;
-                if (fileTypeIcons.includes(iconName)) break;
-            }
-        }
-
-        if (nativeIcon) {
-            const iconName = (nativeIcon.textContent || nativeIcon.innerText || '').trim();
-            if (iconName && iconName !== 'more_vert') {
-                let iconColor = 'var(--plugin-icon-color)';
-                try {
-                    const style = window.getComputedStyle(nativeIcon);
-                    if (style.color) iconColor = style.color;
-                } catch (e) { }
-
-                iconElement = document.createElement('mat-icon');
-                iconElement.className = nativeIcon.className;
-                iconElement.textContent = iconName;
-                iconElement.setAttribute('aria-hidden', 'true');
-                iconElement.setAttribute('data-mat-icon-type', 'font');
-                iconElement.style.marginRight = '8px';
-                iconElement.style.display = 'inline-flex';
-                iconElement.style.alignItems = 'center';
-                iconElement.style.fontSize = '20px';
-                iconElement.style.width = '20px';
-                iconElement.style.height = '20px';
-                iconElement.style.color = iconColor;
-            } else {
-                iconElement = nativeIcon.cloneNode(true);
-                iconElement.style.marginRight = '8px';
-                iconElement.style.display = 'flex';
-            }
+        if (nativeImg) {
+            // Clone the favicon image
+            iconElement = nativeImg.cloneNode(true);
+            iconElement.style.cssText = 'margin-right:8px; display:inline-flex; width:20px; height:20px; border-radius:2px; object-fit:contain;';
         } else {
-            iconElement = document.createElement('span');
-            iconElement.innerText = 'ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾';
-            iconElement.style.marginRight = '8px';
+            // Fallback: look for mat-icon (PDF, text, etc.)
+            const allIcons = nativeRow.querySelectorAll('mat-icon');
+            let nativeIcon = null;
+            const fileTypeIcons = ['drive_pdf', 'article', 'description', 'insert_drive_file',
+                'link', 'video_library', 'audio_file', 'image', 'folder',
+                'text_snippet', 'code', 'table_chart'];
+
+            for (const icon of allIcons) {
+                const iconName = (icon.textContent || icon.innerText || '').trim();
+                if (iconName === 'more_vert' || iconName === 'more_horiz' ||
+                    iconName === 'close' || iconName === 'check' || iconName === 'edit') {
+                    continue;
+                }
+                if (fileTypeIcons.includes(iconName) || !nativeIcon) {
+                    nativeIcon = icon;
+                    if (fileTypeIcons.includes(iconName)) break;
+                }
+            }
+
+            if (nativeIcon) {
+                const iconName = (nativeIcon.textContent || nativeIcon.innerText || '').trim();
+                if (iconName && iconName !== 'more_vert') {
+                    let iconColor = 'var(--plugin-icon-color)';
+                    try {
+                        const style = window.getComputedStyle(nativeIcon);
+                        if (style.color) iconColor = style.color;
+                    } catch (e) { }
+
+                    iconElement = document.createElement('mat-icon');
+                    iconElement.className = nativeIcon.className;
+                    iconElement.textContent = iconName;
+                    iconElement.setAttribute('aria-hidden', 'true');
+                    iconElement.setAttribute('data-mat-icon-type', 'font');
+                    iconElement.style.marginRight = '8px';
+                    iconElement.style.display = 'inline-flex';
+                    iconElement.style.alignItems = 'center';
+                    iconElement.style.fontSize = '20px';
+                    iconElement.style.width = '20px';
+                    iconElement.style.height = '20px';
+                    iconElement.style.color = iconColor;
+                } else {
+                    iconElement = nativeIcon.cloneNode(true);
+                    iconElement.style.marginRight = '8px';
+                    iconElement.style.display = 'flex';
+                }
+            } else {
+                // [FIX] Clean fallback: generic document SVG icon (replaces corrupted emoji string)
+                const wrapper = document.createElement('span');
+                wrapper.innerHTML = `<svg style="color:#8ab4f8;" xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>`;
+                iconElement = wrapper.firstElementChild;
+                iconElement.style.marginRight = '8px';
+            }
         }
     } else {
         // Studio panel: Find and clone the artifact icon
@@ -3733,6 +3745,32 @@ function injectMoveTrigger(row, text, context) {
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Inject move trigger error:', e.message);
     }
+}
+
+/**
+ * Validates a title string to ensure it's not a garbled ID or obfuscated string.
+ * @param {string} text 
+ * @returns {boolean}
+ */
+function isValidTitle(text) {
+    if (!text || typeof text !== 'string') return false;
+    const t = text.trim();
+    if (t.length < 2) return false;
+
+    // Reject known bad patterns (obfuscated IDs)
+    // e.g. "Ãf/Æ..." or very long strings with no spaces/common punctuation
+
+    // 1. Check for high density of extended ASCII/Unicode garbage if length is > 10
+    // This regex looks for 3+ consecutive non-ASCII chars which is rare in normal English titles
+    if (/[^\x00-\x7F]{3,}/.test(t) && t.length > 15) return false;
+
+    // 2. Check for "gibberish" - long string, no spaces, mixed case/numbers/symbols
+    if (t.length > 20 && !t.includes(' ')) {
+        // Allow URLs though (maybe)
+        if (!t.startsWith('http')) return false;
+    }
+
+    return true;
 }
 
 function showMoveMenu(e, text, context) {
@@ -4413,7 +4451,7 @@ function processDashboardNotebooks() {
             // Skip the "Create new" card
             if (card.classList.contains('create-new-action-button')) return;
 
-            const notebookUrl = getNotebookFullUrl(card);
+            const notebookUrl = getCanonicalNotebookUrl(card);
             if (!notebookUrl) {
                 return;
             }
@@ -4492,7 +4530,7 @@ function addFolderButtonToCard(card, notebookId, title) {
         // Only add button in Grid view, skip List view
         if (isListView()) return;
 
-        const notebookUrl = getNotebookFullUrl(card);
+        const notebookUrl = getCanonicalNotebookUrl(card);
         if (!notebookUrl) return;
 
         let lastClickTime = 0;
@@ -4580,7 +4618,7 @@ function addNotebookToFolderView(notebookId, title, folderId, originalCard) {
                 onclick: (e) => {
                     e.stopPropagation();
                     // Use full URL to remove mapping
-                    const notebookUrl = originalCard ? getNotebookFullUrl(originalCard) : window.location.origin + '/notebook/' + notebookId;
+                    const notebookUrl = originalCard ? getCanonicalNotebookUrl(originalCard) : window.location.origin + '/notebook/' + notebookId;
                     delete dashboardState.mappings[notebookUrl];
                     saveDashboardState();
 
@@ -5203,5 +5241,61 @@ window.NotebookLMFoldNest = {
         }
     }
 };
+
+// --- [FIX] HELPER FUNCTIONS (Robust Implementations) ---
+
+/**
+ * Safely extracts the canonical URL for a notebook from its card.
+ * @param {HTMLElement} card 
+ * @returns {string|null}
+ */
+function getCanonicalNotebookUrl(card) {
+    if (!card) return null;
+    const link = card.querySelector('a[href*="/notebook/"]');
+    if (!link) return null;
+    try {
+        const url = new URL(link.href, window.location.origin);
+        // Canonicalize: remove query params and hash, remove trailing slash
+        const path = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
+        return url.origin + path;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Safely extracts the notebook ID from its card.
+ * @param {HTMLElement} card 
+ * @returns {string|null}
+ */
+function getNotebookIdFromCard(card) {
+    if (!card) return null;
+    // Try data attribute first
+    if (card.dataset.notebookId) return card.dataset.notebookId;
+
+    // Fallback to URL parsing
+    const url = getCanonicalNotebookUrl(card);
+    if (!url) return null;
+    const match = url.match(/\/notebook\/([^\/]+)/);
+    return match ? match[1] : null;
+}
+
+/**
+ * Safely extracts the notebook title from its card.
+ * @param {HTMLElement} card 
+ * @returns {string}
+ */
+function getNotebookTitleFromCard(card) {
+    if (!card) return "Untitled Notebook";
+    // Try reliable selectors based on current DOM
+    const titleEl = card.querySelector('.project-title, .tile-title, .mat-mdc-card-title, h3');
+    if (titleEl) return titleEl.innerText.trim();
+
+    // Fallback to aria-label
+    const ariaLabel = card.getAttribute('aria-label');
+    if (ariaLabel) return ariaLabel.trim();
+
+    return "Untitled Notebook";
+}
 
 init();
