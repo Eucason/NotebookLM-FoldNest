@@ -1411,7 +1411,7 @@ function startApp() {
 function saveState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-
+    
     try {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
@@ -3763,11 +3763,9 @@ function initDashboard() {
 function saveDashboardState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-
+    
     try {
-        // Preserve _syncMeta timestamp for sync conflict resolution
-        const stateToSave = { ...dashboardState, _syncMeta: { lastModified: Date.now(), version: '1.0.0' } };
-        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: stateToSave }, () => {
+        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
             if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
                 window.FoldNestSync.triggerUpload('dashboard');
@@ -4559,31 +4557,41 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             delete dashboardState.mappings[notebookUrl];
         }
 
-        // Save to storage via unified save path (includes _syncMeta + sync trigger)
-        saveDashboardState();
-
-        // Success flow - re-render after brief delay
-        setTimeout(() => {
-            const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
-            showToast(`Moved to ${folderName} ✓`);
-
-            // FIX: Force re-processing of the original card to generate proxy
-            if (cardEl) {
-                cardEl.classList.remove('plugin-dashboard-processed');
-                // If Uncategorized, ensure it's visible again
-                if (!folderId) {
-                    const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
-                    gridItem.style.display = '';
-                    gridItem.style.visibility = '';
-                    gridItem.classList.remove('plugin-hidden-grid-item');
-                    cardEl.dataset.pluginHidden = 'false';
-                    cardEl.classList.remove('card-fade-out');
-                }
+        // Save to storage
+        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
+            if (chrome.runtime.lastError) {
+                console.error('[NotebookLM FoldNest] Storage error:', chrome.runtime.lastError);
+                // Rollback on error
+                if (oldFolderId) dashboardState.mappings[notebookUrl] = oldFolderId;
+                else delete dashboardState.mappings[notebookUrl];
+                showToast("Failed to move notebook. Please try again.");
+                return;
             }
 
-            // Re-run the dashboard organizer to reflect changes (create proxy)
-            runDashboardOrganizer();
-        }, 50);
+            // Success flow
+            setTimeout(() => {
+                // Determine destination name for toast
+                const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
+                showToast(`Moved to ${folderName} ✓`);
+
+                // FIX: Force re-processing of the original card to generate proxy
+                if (cardEl) {
+                    cardEl.classList.remove('plugin-dashboard-processed');
+                    // If Uncategorized, ensure it's visible again
+                    if (!folderId) {
+                        const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
+                        gridItem.style.display = '';
+                        gridItem.style.visibility = '';
+                        gridItem.classList.remove('plugin-hidden-grid-item');
+                        cardEl.dataset.pluginHidden = 'false';
+                        cardEl.classList.remove('card-fade-out');
+                    }
+                }
+
+                // Re-run the dashboard organizer to reflect changes (create proxy)
+                runDashboardOrganizer();
+            }, 50);
+        });
 
     } catch (e) {
         console.error('[NotebookLM FoldNest] moveNotebookToFolder error:', e);
@@ -4964,9 +4972,8 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 dashboardState = Object.assign({}, dashboardState || DEFAULT_DASHBOARD_STATE, newState);
 
-                // Save directly WITHOUT triggering sync upload (we just downloaded this)
-                const stateToSave = { ...dashboardState, _syncMeta: newState._syncMeta || { lastModified: Date.now(), version: '1.0.0' } };
-                chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: stateToSave });
+                // Save locally (will trigger upload debounce if sync enabled)
+                saveDashboardState();
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {

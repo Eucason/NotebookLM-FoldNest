@@ -82,13 +82,13 @@
     async function queueOfflineOperation(type, state) {
         // Remove duplicate operations for same type
         offlineQueue = offlineQueue.filter(op => op.type !== type);
-
+        
         offlineQueue.push({
             type,
             state,
             timestamp: Date.now()
         });
-
+        
         await saveOfflineQueue();
         console.log('[FoldNest Sync] Queued offline operation:', type);
         showToast(`Offline: ${type} sync queued`, 'warning');
@@ -99,14 +99,14 @@
      */
     async function processOfflineQueue() {
         if (offlineQueue.length === 0 || !syncSettings.enabled) return;
-
+        
         console.log('[FoldNest Sync] Processing offline queue:', offlineQueue.length, 'operations');
         showToast(`Syncing ${offlineQueue.length} queued changes...`, 'info');
-
+        
         const queue = [...offlineQueue];
         offlineQueue = [];
         await saveOfflineQueue();
-
+        
         let successCount = 0;
         for (const op of queue) {
             try {
@@ -118,9 +118,9 @@
                 offlineQueue.push(op);
             }
         }
-
+        
         await saveOfflineQueue();
-
+        
         if (successCount > 0) {
             showToast(`Synced ${successCount} queued changes`, 'success');
         }
@@ -167,10 +167,10 @@
      */
     function detectPageType() {
         const url = window.location.href;
-
+        
         if (url.includes('/notebook/')) {
             currentPageType = 'notebook';
-
+            
             // Extract notebook ID from URL
             const match = url.match(/\/notebook\/([^/?#]+)/);
             if (match) {
@@ -191,7 +191,7 @@
         try {
             // IMMEDIATELY clear just-synced flag on page load to prevent stale timestamps
             await chrome.storage.local.remove(JUST_SYNCED_KEY);
-
+            
             // Detect page type first
             detectPageType();
 
@@ -246,7 +246,7 @@
      */
     async function getAuthToken(interactive = false) {
         console.log(`[FoldNest Sync] 🔑 getAuthToken called, interactive: ${interactive}, hasCachedToken: ${!!cachedToken}`);
-
+        
         return new Promise((resolve) => {
             // Check if we have a valid cached token
             if (cachedToken && !interactive) {
@@ -256,7 +256,7 @@
             }
 
             console.log('[FoldNest Sync] 🔑 Requesting token from background script...');
-
+            
             // Request token from background script
             chrome.runtime.sendMessage(
                 { action: 'getAuthToken', interactive },
@@ -371,7 +371,7 @@
 
             const url = `${DRIVE_API_URL}/files?${params}`;
             console.log(`[FoldNest Sync] 🌐 API URL: ${url}`);
-
+            
             const response = await makeAuthenticatedRequest(url);
 
             if (!response.ok) {
@@ -382,11 +382,11 @@
 
             const data = await response.json();
             console.log(`[FoldNest Sync] 📁 Found ${data.files?.length || 0} files`);
-
+            
             if (data.files && data.files.length > 0) {
                 console.log(`[FoldNest Sync] ✅ File found: ${data.files[0].id}`);
             }
-
+            
             return data.files && data.files.length > 0 ? data.files[0] : null;
         } catch (e) {
             console.error('[FoldNest Sync] ❌ Find file failed:', e.message);
@@ -545,15 +545,21 @@
                     lastModified: now,
                     version: '1.0.0'
                 };
-
+                
                 if (type === 'dashboard') {
-                    // _syncMeta is now maintained by saveDashboardState() in content.js,
-                    // so we don't need to re-save it here after upload.
+                    const updatedState = { ...state, _syncMeta: syncMeta };
+                    await chrome.storage.local.set({ 'notebookLM_dashboardFolders': updatedState });
                 } else {
-                    // _syncMeta is now maintained by saveState() in content.js,
-                    // so we don't need to re-save it here after upload.
+                    // Update notebook state in storage with sync metadata
+                    const match = window.location.pathname.match(/\/notebook\/([^\/\?]+)/);
+                    if (match) {
+                        const notebookId = match[1];
+                        const stateKey = `notebookTreeState_${notebookId}`;
+                        const updatedState = { ...state, _syncMeta: syncMeta };
+                        await chrome.storage.local.set({ [stateKey]: updatedState });
+                    }
                 }
-
+                
                 syncSettings.lastSyncTime = now;
                 saveSyncSettings();
                 updateSyncStatus('success');
@@ -640,7 +646,7 @@
      */
     async function performFullSync() {
         if (!syncSettings.enabled) return false;
-
+        
         // Guard: Skip if extension context invalidated (happens during dev reload)
         if (!isContextValid()) {
             console.warn('[FoldNest Sync] Extension context invalidated, skipping sync');
@@ -664,7 +670,7 @@
                 if (remoteTime > localTime) {
                     // Remote is newer - try to apply without reload
                     console.log('[FoldNest Sync] Dashboard remote is newer, applying state...');
-
+                    
                     // CHANGED: Use applyState if available, otherwise just save to storage
                     const api = window.NotebookLMFoldNest;
                     if (api?.applyState) {
@@ -1108,7 +1114,7 @@
 
         const toast = document.createElement('div');
         toast.className = `foldnest-sync-toast foldnest-sync-toast-${type}`;
-
+        
         // Color scheme based on type
         const colors = {
             info: { bg: '#1a73e8', icon: 'ℹ️' },
@@ -1197,7 +1203,7 @@
         getPageType: () => currentPageType,
         getNotebookId: () => currentNotebookId,
         isOnline: () => isOnline,
-
+        
         // Offline queue
         getQueueLength: () => offlineQueue.length,
         processOfflineQueue
@@ -1238,7 +1244,7 @@
      */
     function setupUrlObserver() {
         if (urlObserver) return; // Already set up
-
+        
         // Wait for document.body to exist
         if (!document.body) {
             if (document.readyState === 'loading') {
@@ -1256,11 +1262,11 @@
                     lastUrl = window.location.href;
                     console.log('[FoldNest Sync] URL changed, re-detecting page type');
                     detectPageType();
-
+                    
                     // Re-setup UI for new page
                     if (syncInitialized) {
                         setupSyncUI();
-
+                        
                         // Sync on page navigation if enabled
                         if (syncSettings.enabled && isOnline) {
                             setTimeout(() => performFullSync(), 1500);
