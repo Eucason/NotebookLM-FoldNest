@@ -547,11 +547,25 @@
                 };
 
                 if (type === 'dashboard') {
-                    // _syncMeta is now maintained by saveDashboardState() in content.js,
-                    // so we don't need to re-save it here after upload.
+                    // Update local _syncMeta to match the upload timestamp so the next
+                    // sync check doesn't see remote as newer and do a pointless download.
+                    const result = await chrome.storage.local.get(['notebookLM_dashboardFolders']);
+                    if (result['notebookLM_dashboardFolders']) {
+                        const updated = { ...result['notebookLM_dashboardFolders'], _syncMeta: syncMeta };
+                        await chrome.storage.local.set({ 'notebookLM_dashboardFolders': updated });
+                    }
                 } else {
-                    // _syncMeta is now maintained by saveState() in content.js,
-                    // so we don't need to re-save it here after upload.
+                    // Same for notebook state
+                    const match = window.location.pathname.match(/\/notebook\/([^\/\?]+)/);
+                    if (match) {
+                        const notebookId = match[1];
+                        const stateKey = `notebookTreeState_${notebookId}`;
+                        const result = await chrome.storage.local.get([stateKey]);
+                        if (result[stateKey]) {
+                            const updated = { ...result[stateKey], _syncMeta: syncMeta };
+                            await chrome.storage.local.set({ [stateKey]: updated });
+                        }
+                    }
                 }
 
                 syncSettings.lastSyncTime = now;
