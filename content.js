@@ -211,7 +211,42 @@ const DEFAULT_SELECTORS = {
     ]
 };
 
+// --- SELECTOR HEURISTICS (For Auto-Repair) ---
+const SELECTOR_HEURISTICS = {
+    sourceRow: {
+        traits: [
+            { type: 'attribute', key: 'aria-label', value: /Source|Note/i },
+            { type: 'child', selector: 'mat-checkbox' },
+            { type: 'tag', value: 'div' }
+        ],
+        container: 'section.source-panel, .source-panel, [data-panel="source"]'
+    },
+    studioRow: {
+        traits: [
+            { type: 'tag', value: 'artifact-library-note' },
+            { type: 'tag', value: 'artifact-library-item' },
+            { type: 'attribute', key: 'class', value: /artifact/i }
+        ],
+        container: 'section.studio-panel, .studio-panel, [data-panel="studio"]'
+    },
+    sourceTitle: {
+        traits: [
+            { type: 'attribute', key: 'class', value: /title|name/i },
+            { type: 'attribute', key: 'aria-label', value: /title/i }
+        ],
+        parent: 'sourceRow'
+    },
+    studioTitle: {
+        traits: [
+            { type: 'tag', value: 'h3' },
+            { type: 'attribute', key: 'class', value: /title/i }
+        ],
+        parent: 'studioRow'
+    }
+};
+
 let activeSelectors = JSON.parse(JSON.stringify(DEFAULT_SELECTORS));
+let repairedSelectors = {}; // Track auto-fixed selectors
 
 // --- STATE ---
 const DEFAULT_STATE = {
@@ -1197,15 +1232,23 @@ function cleanup() {
 }
 
 // --- SELECTOR HEALTH MONITORING ---
+// --- SELECTOR HEALTH MONITORING & AUTO-REPAIR ---
 function checkSelectorHealth() {
     try {
         const health = {};
         const criticalSelectors = ['sourceRow', 'studioRow', 'sourceTitle', 'studioTitle'];
+        let needsRepair = false;
 
         for (const key of criticalSelectors) {
             const selector = activeSelectors[key];
             const found = safeQuery(document, selector);
             health[key] = !!found;
+            if (!found) needsRepair = true;
+        }
+
+        if (needsRepair) {
+            console.log('[NotebookLM FoldNest] UI changes detected. Attempting auto-repair...');
+            attemptSelectorRepair(criticalSelectors);
         }
 
         const failures = Object.entries(health).filter(([_, v]) => !v);
@@ -1230,6 +1273,160 @@ function checkSelectorHealth() {
     }
 }
 
+/**
+ * Selector Repairman Module
+ * Uses heuristics to find elements when primary selectors fail.
+ */
+function attemptSelectorRepair(keys) {
+    let repairCount = 0;
+    const reportData = {
+        version: getExtensionVersion(),
+        timestamp: new Date().toISOString(),
+        repairs: []
+    };
+
+    for (const key of keys) {
+        if (safeQuery(document, activeSelectors[key])) continue; // Already working
+
+        const heuristic = SELECTOR_HEURISTICS[key];
+        if (!heuristic) {
+            console.debug(`[NotebookLM FoldNest] No heuristic defined for ${key}`);
+            continue;
+        }
+
+        console.debug(`[NotebookLM FoldNest] Attempting repair for ${key}...`);
+        const foundSelector = SelectorRepairman.discover(key, heuristic);
+
+        if (foundSelector) {
+            const oldSelector = activeSelectors[key];
+            activeSelectors[key] = [foundSelector, ...(Array.isArray(oldSelector) ? oldSelector : [oldSelector])];
+            repairedSelectors[key] = foundSelector;
+            repairCount++;
+
+            reportData.repairs.push({
+                key,
+                old: oldSelector,
+                new: foundSelector
+            });
+
+            console.log(`[NotebookLM FoldNest] ✓ Repaired ${key}: ${foundSelector}`);
+        } else {
+            console.debug(`[NotebookLM FoldNest] ✗ Could not repair ${key} - no matching elements found`);
+        }
+    }
+
+    if (repairCount > 0) {
+        chrome.storage.local.set({ repairedSelectors });
+        showRepairToast(reportData);
+    } else {
+        console.debug('[NotebookLM FoldNest] No repairs possible. Page may still be loading or selectors need manual update.');
+    }
+}
+
+const SelectorRepairman = {
+    discover: (key, heuristic) => {
+        let container = document;
+        if (heuristic.container) {
+            container = safeQuery(document, heuristic.container.split(',').map(s => s.trim())) || document;
+        } else if (heuristic.parent) {
+            // Find parent first
+            const parentElement = safeQuery(document, activeSelectors[heuristic.parent]);
+            if (parentElement) container = parentElement;
+        }
+
+        if (!container) return null;
+
+        // OPTIMIZED: Build targeted queries from traits instead of scanning all elements
+        const traits = heuristic.traits || [];
+        const candidateSelectors = [];
+
+        for (const trait of traits) {
+            if (trait.type === 'tag') {
+                candidateSelectors.push(trait.value);
+            } else if (trait.type === 'attribute') {
+                candidateSelectors.push(`[${trait.key}]`);
+            } else if (trait.type === 'child') {
+                candidateSelectors.push(`*:has(${trait.selector})`);
+            }
+        }
+
+        // Query only elements matching at least one trait
+        const queryString = candidateSelectors.join(', ');
+        if (!queryString) return null;
+
+        const candidates = container.querySelectorAll(queryString);
+        const scoredCandidates = [];
+
+        // Score each candidate
+        for (const el of candidates) {
+            let score = 0;
+
+            for (const trait of traits) {
+                if (trait.type === 'tag' && el.tagName.toLowerCase() === trait.value.toLowerCase()) score++;
+                else if (trait.type === 'attribute') {
+                    const attrVal = el.getAttribute(trait.key);
+                    if (attrVal && trait.value.test(attrVal)) score++;
+                } else if (trait.type === 'child') {
+                    if (el.querySelector(trait.selector)) score++;
+                }
+            }
+
+            const matchRate = score / traits.length;
+            if (matchRate >= 0.7) {
+                scoredCandidates.push({ el, score: matchRate });
+            }
+        }
+
+        if (scoredCandidates.length === 0) return null;
+
+        // Sort by score (highest first)
+        scoredCandidates.sort((a, b) => b.score - a.score);
+        const best = scoredCandidates[0].el;
+
+        // Generate a stable selector for the discovered element
+        return SelectorRepairman.generateSelector(best);
+    },
+
+    generateSelector: (el) => {
+        // Prefer ID
+        if (el.id) return `#${el.id}`;
+
+        // Prefer specific attribute combinations
+        const attrs = ['aria-label', 'data-source-id', 'data-note-id', 'role'];
+        for (const attr of attrs) {
+            const val = el.getAttribute(attr);
+            if (val) return `${el.tagName.toLowerCase()}[${attr}="${val}"]`;
+        }
+
+        // Class-based (cleaned of dynamic classes)
+        const classes = Array.from(el.classList).filter(c => !/mat-|plugin-|ng-|v-/.test(c));
+        if (classes.length > 0) {
+            return `${el.tagName.toLowerCase()}.${classes.join('.')}`;
+        }
+
+        return el.tagName.toLowerCase(); // Fallback
+    }
+};
+
+function showRepairToast(report) {
+    const message = `Auto-repaired ${report.repairs.length} selectors ✓`;
+    const toast = showToast(message, 'info', 5000);
+
+    // Add "Copy Report" button to toast if possible
+    if (toast) {
+        const btn = document.createElement('button');
+        btn.innerText = 'Copy Report';
+        btn.style.cssText = 'margin-left: 10px; background: #555; border: none; color: white; padding: 2px 8px; border-radius: 2px; cursor: pointer; pointer-events: auto;';
+        btn.onclick = () => {
+            navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+            btn.innerText = 'Copied!';
+            setTimeout(() => btn.innerText = 'Copy Report', 2000);
+        };
+        toast.appendChild(btn);
+        toast.style.pointerEvents = 'auto'; // Enable interaction
+    }
+}
+
 // --- VERSION CHECK ---
 function checkVersionSync() {
     try {
@@ -1247,6 +1444,21 @@ function init() {
         cleanup();
         checkVersionSync();
         resetAllFeatures(); // Reset feature status on init
+
+        // Load repaired selectors from local storage
+        chrome.storage.local.get(['repairedSelectors'], (result) => {
+            if (result.repairedSelectors) {
+                repairedSelectors = result.repairedSelectors;
+                for (const key in repairedSelectors) {
+                    const sel = repairedSelectors[key];
+                    activeSelectors[key] = [sel, ...(Array.isArray(DEFAULT_SELECTORS[key]) ? DEFAULT_SELECTORS[key] : [DEFAULT_SELECTORS[key]])];
+                }
+                console.log('[NotebookLM FoldNest] Loaded repaired selectors:', repairedSelectors);
+            }
+
+            // Initial health check + potential repair after storage load
+            setTimeout(checkSelectorHealth, 1000);
+        });
 
         // v0.9.0: Detect page type and route accordingly
         const pageType = getPageType();
@@ -1411,7 +1623,7 @@ function startApp() {
 function saveState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-    
+
     try {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
@@ -2309,22 +2521,30 @@ function importFolders() {
     }
 }
 
-function showToast(message) {
+function showToast(message, type = 'info', duration = TOAST_DISPLAY_MS) {
     try {
         const existing = document.getElementById('plugin-toast');
         if (existing) existing.remove();
         const toast = document.createElement('div');
         toast.id = 'plugin-toast';
         toast.innerText = message;
-        toast.style.cssText = `position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: #323232; color: #fff; padding: 10px 24px; border-radius: 4px; font-size: 14px; z-index: 10000; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;`;
+
+        // Dynamic styling based on type
+        const bgColor = type === 'success' ? '#2e7d32' : (type === 'warning' ? '#f57c00' : '#323232');
+
+        toast.style.cssText = `position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: ${bgColor}; color: #fff; padding: 10px 24px; border-radius: 4px; font-size: 14px; z-index: 10000; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;`;
+
         document.body.appendChild(toast);
         requestAnimationFrame(() => toast.style.opacity = '1');
+
         setTimeout(() => {
             toast.style.opacity = '0';
             setTimeout(() => toast.remove(), TOAST_FADE_MS);
-        }, TOAST_DISPLAY_MS);
+        }, duration);
+
+        return toast;
     } catch (e) {
-        // Toast is non-critical
+        return null;
     }
 }
 
@@ -3763,7 +3983,7 @@ function initDashboard() {
 function saveDashboardState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-    
+
     try {
         chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
