@@ -532,7 +532,13 @@ body.plugin-sidebar-open .mat-drawer-container {
 .project-tile:hover .plugin-add-to-folder-btn,
 .mat-card:hover .plugin-add-to-folder-btn,
 .projects-dashboard-item:hover .plugin-add-to-folder-btn,
-[role="row"]:hover .plugin-move-trigger {
+[role="row"]:hover .plugin-add-to-folder-btn,
+[role="row"]:hover .plugin-move-trigger,
+/* NotebookLM List View specific selectors */
+.mat-mdc-row:hover .plugin-add-to-folder-btn,
+tr.mat-mdc-row:hover .plugin-add-to-folder-btn,
+.cdk-row:hover .plugin-add-to-folder-btn,
+tr:hover .plugin-add-to-folder-btn {
     opacity: 1 !important;
 }
 

@@ -211,42 +211,7 @@ const DEFAULT_SELECTORS = {
     ]
 };
 
-// --- SELECTOR HEURISTICS (For Auto-Repair) ---
-const SELECTOR_HEURISTICS = {
-    sourceRow: {
-        traits: [
-            { type: 'attribute', key: 'aria-label', value: /Source|Note/i },
-            { type: 'child', selector: 'mat-checkbox' },
-            { type: 'tag', value: 'div' }
-        ],
-        container: 'section.source-panel, .source-panel, [data-panel="source"]'
-    },
-    studioRow: {
-        traits: [
-            { type: 'tag', value: 'artifact-library-note' },
-            { type: 'tag', value: 'artifact-library-item' },
-            { type: 'attribute', key: 'class', value: /artifact/i }
-        ],
-        container: 'section.studio-panel, .studio-panel, [data-panel="studio"]'
-    },
-    sourceTitle: {
-        traits: [
-            { type: 'attribute', key: 'class', value: /title|name/i },
-            { type: 'attribute', key: 'aria-label', value: /title/i }
-        ],
-        parent: 'sourceRow'
-    },
-    studioTitle: {
-        traits: [
-            { type: 'tag', value: 'h3' },
-            { type: 'attribute', key: 'class', value: /title/i }
-        ],
-        parent: 'studioRow'
-    }
-};
-
 let activeSelectors = JSON.parse(JSON.stringify(DEFAULT_SELECTORS));
-let repairedSelectors = {}; // Track auto-fixed selectors
 
 // --- STATE ---
 const DEFAULT_STATE = {
@@ -1232,23 +1197,15 @@ function cleanup() {
 }
 
 // --- SELECTOR HEALTH MONITORING ---
-// --- SELECTOR HEALTH MONITORING & AUTO-REPAIR ---
 function checkSelectorHealth() {
     try {
         const health = {};
         const criticalSelectors = ['sourceRow', 'studioRow', 'sourceTitle', 'studioTitle'];
-        let needsRepair = false;
 
         for (const key of criticalSelectors) {
             const selector = activeSelectors[key];
             const found = safeQuery(document, selector);
             health[key] = !!found;
-            if (!found) needsRepair = true;
-        }
-
-        if (needsRepair) {
-            console.log('[NotebookLM FoldNest] UI changes detected. Attempting auto-repair...');
-            attemptSelectorRepair(criticalSelectors);
         }
 
         const failures = Object.entries(health).filter(([_, v]) => !v);
@@ -1273,160 +1230,6 @@ function checkSelectorHealth() {
     }
 }
 
-/**
- * Selector Repairman Module
- * Uses heuristics to find elements when primary selectors fail.
- */
-function attemptSelectorRepair(keys) {
-    let repairCount = 0;
-    const reportData = {
-        version: getExtensionVersion(),
-        timestamp: new Date().toISOString(),
-        repairs: []
-    };
-
-    for (const key of keys) {
-        if (safeQuery(document, activeSelectors[key])) continue; // Already working
-
-        const heuristic = SELECTOR_HEURISTICS[key];
-        if (!heuristic) {
-            console.debug(`[NotebookLM FoldNest] No heuristic defined for ${key}`);
-            continue;
-        }
-
-        console.debug(`[NotebookLM FoldNest] Attempting repair for ${key}...`);
-        const foundSelector = SelectorRepairman.discover(key, heuristic);
-
-        if (foundSelector) {
-            const oldSelector = activeSelectors[key];
-            activeSelectors[key] = [foundSelector, ...(Array.isArray(oldSelector) ? oldSelector : [oldSelector])];
-            repairedSelectors[key] = foundSelector;
-            repairCount++;
-
-            reportData.repairs.push({
-                key,
-                old: oldSelector,
-                new: foundSelector
-            });
-
-            console.log(`[NotebookLM FoldNest] ✓ Repaired ${key}: ${foundSelector}`);
-        } else {
-            console.debug(`[NotebookLM FoldNest] ✗ Could not repair ${key} - no matching elements found`);
-        }
-    }
-
-    if (repairCount > 0) {
-        chrome.storage.local.set({ repairedSelectors });
-        showRepairToast(reportData);
-    } else {
-        console.debug('[NotebookLM FoldNest] No repairs possible. Page may still be loading or selectors need manual update.');
-    }
-}
-
-const SelectorRepairman = {
-    discover: (key, heuristic) => {
-        let container = document;
-        if (heuristic.container) {
-            container = safeQuery(document, heuristic.container.split(',').map(s => s.trim())) || document;
-        } else if (heuristic.parent) {
-            // Find parent first
-            const parentElement = safeQuery(document, activeSelectors[heuristic.parent]);
-            if (parentElement) container = parentElement;
-        }
-
-        if (!container) return null;
-
-        // OPTIMIZED: Build targeted queries from traits instead of scanning all elements
-        const traits = heuristic.traits || [];
-        const candidateSelectors = [];
-
-        for (const trait of traits) {
-            if (trait.type === 'tag') {
-                candidateSelectors.push(trait.value);
-            } else if (trait.type === 'attribute') {
-                candidateSelectors.push(`[${trait.key}]`);
-            } else if (trait.type === 'child') {
-                candidateSelectors.push(`*:has(${trait.selector})`);
-            }
-        }
-
-        // Query only elements matching at least one trait
-        const queryString = candidateSelectors.join(', ');
-        if (!queryString) return null;
-
-        const candidates = container.querySelectorAll(queryString);
-        const scoredCandidates = [];
-
-        // Score each candidate
-        for (const el of candidates) {
-            let score = 0;
-
-            for (const trait of traits) {
-                if (trait.type === 'tag' && el.tagName.toLowerCase() === trait.value.toLowerCase()) score++;
-                else if (trait.type === 'attribute') {
-                    const attrVal = el.getAttribute(trait.key);
-                    if (attrVal && trait.value.test(attrVal)) score++;
-                } else if (trait.type === 'child') {
-                    if (el.querySelector(trait.selector)) score++;
-                }
-            }
-
-            const matchRate = score / traits.length;
-            if (matchRate >= 0.7) {
-                scoredCandidates.push({ el, score: matchRate });
-            }
-        }
-
-        if (scoredCandidates.length === 0) return null;
-
-        // Sort by score (highest first)
-        scoredCandidates.sort((a, b) => b.score - a.score);
-        const best = scoredCandidates[0].el;
-
-        // Generate a stable selector for the discovered element
-        return SelectorRepairman.generateSelector(best);
-    },
-
-    generateSelector: (el) => {
-        // Prefer ID
-        if (el.id) return `#${el.id}`;
-
-        // Prefer specific attribute combinations
-        const attrs = ['aria-label', 'data-source-id', 'data-note-id', 'role'];
-        for (const attr of attrs) {
-            const val = el.getAttribute(attr);
-            if (val) return `${el.tagName.toLowerCase()}[${attr}="${val}"]`;
-        }
-
-        // Class-based (cleaned of dynamic classes)
-        const classes = Array.from(el.classList).filter(c => !/mat-|plugin-|ng-|v-/.test(c));
-        if (classes.length > 0) {
-            return `${el.tagName.toLowerCase()}.${classes.join('.')}`;
-        }
-
-        return el.tagName.toLowerCase(); // Fallback
-    }
-};
-
-function showRepairToast(report) {
-    const message = `Auto-repaired ${report.repairs.length} selectors ✓`;
-    const toast = showToast(message, 'info', 5000);
-
-    // Add "Copy Report" button to toast if possible
-    if (toast) {
-        const btn = document.createElement('button');
-        btn.innerText = 'Copy Report';
-        btn.style.cssText = 'margin-left: 10px; background: #555; border: none; color: white; padding: 2px 8px; border-radius: 2px; cursor: pointer; pointer-events: auto;';
-        btn.onclick = () => {
-            navigator.clipboard.writeText(JSON.stringify(report, null, 2));
-            btn.innerText = 'Copied!';
-            setTimeout(() => btn.innerText = 'Copy Report', 2000);
-        };
-        toast.appendChild(btn);
-        toast.style.pointerEvents = 'auto'; // Enable interaction
-    }
-}
-
 // --- VERSION CHECK ---
 function checkVersionSync() {
     try {
@@ -1444,21 +1247,6 @@ function init() {
         cleanup();
         checkVersionSync();
         resetAllFeatures(); // Reset feature status on init
-
-        // Load repaired selectors from local storage
-        chrome.storage.local.get(['repairedSelectors'], (result) => {
-            if (result.repairedSelectors) {
-                repairedSelectors = result.repairedSelectors;
-                for (const key in repairedSelectors) {
-                    const sel = repairedSelectors[key];
-                    activeSelectors[key] = [sel, ...(Array.isArray(DEFAULT_SELECTORS[key]) ? DEFAULT_SELECTORS[key] : [DEFAULT_SELECTORS[key]])];
-                }
-                console.log('[NotebookLM FoldNest] Loaded repaired selectors:', repairedSelectors);
-            }
-
-            // Initial health check + potential repair after storage load
-            setTimeout(checkSelectorHealth, 1000);
-        });
 
         // v0.9.0: Detect page type and route accordingly
         const pageType = getPageType();
@@ -1623,18 +1411,13 @@ function startApp() {
 function saveState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-
+    
     try {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
 
-        // Always include _syncMeta so sync conflict resolution works correctly.
-        // Without this, localTime is always 0 and remote overwrites local changes.
-        const stateToSave = {
-            ...appState,
-            _syncMeta: { lastModified: Date.now(), version: '1.0.0' }
-        };
-        chrome.storage.local.set({ [stateKey]: stateToSave }, () => {
+        // v0.8.5: Local-only storage (no sync limits to worry about)
+        chrome.storage.local.set({ [stateKey]: appState }, () => {
             if (chrome.runtime.lastError) {
                 console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
             } else {
@@ -2526,30 +2309,22 @@ function importFolders() {
     }
 }
 
-function showToast(message, type = 'info', duration = TOAST_DISPLAY_MS) {
+function showToast(message) {
     try {
         const existing = document.getElementById('plugin-toast');
         if (existing) existing.remove();
         const toast = document.createElement('div');
         toast.id = 'plugin-toast';
         toast.innerText = message;
-
-        // Dynamic styling based on type
-        const bgColor = type === 'success' ? '#2e7d32' : (type === 'warning' ? '#f57c00' : '#323232');
-
-        toast.style.cssText = `position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: ${bgColor}; color: #fff; padding: 10px 24px; border-radius: 4px; font-size: 14px; z-index: 10000; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;`;
-
+        toast.style.cssText = `position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: #323232; color: #fff; padding: 10px 24px; border-radius: 4px; font-size: 14px; z-index: 10000; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;`;
         document.body.appendChild(toast);
         requestAnimationFrame(() => toast.style.opacity = '1');
-
         setTimeout(() => {
             toast.style.opacity = '0';
             setTimeout(() => toast.remove(), TOAST_FADE_MS);
-        }, duration);
-
-        return toast;
+        }, TOAST_DISPLAY_MS);
     } catch (e) {
-        return null;
+        // Toast is non-critical
     }
 }
 
@@ -3988,19 +3763,9 @@ function initDashboard() {
 function saveDashboardState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-
+    
     try {
-        // Always include _syncMeta so sync conflict resolution works correctly.
-        // Without this, localTime is always 0 and remote overwrites local changes.
-        const stateToSave = {
-            ...dashboardState,
-            _syncMeta: { lastModified: Date.now(), version: '1.0.0' }
-        };
-        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: stateToSave }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
-                return;
-            }
+        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
             if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
                 window.FoldNestSync.triggerUpload('dashboard');
@@ -4483,15 +4248,13 @@ function processDashboardNotebooks() {
  * Add a "move to folder" button to a notebook card
  */
 /**
- * Add a "move to folder" button to a notebook card (Grid view only)
+ * Add a "move to folder" button to a notebook card
  */
 function addFolderButtonToCard(card, notebookId, title) {
     try {
         if (card.querySelector('.plugin-add-to-folder-btn')) return;
 
-        // Only add button in Grid view, skip List view
-        if (isListView()) return;
-
+        const isList = isListView();
         const notebookUrl = getNotebookFullUrl(card);
         if (!notebookUrl) return;
 
@@ -4511,38 +4274,84 @@ function addFolderButtonToCard(card, notebookId, title) {
             }
         }, [getIconElement('addToFolder')]);
 
-        // Grid view: Absolute positioning in corner
-        Object.assign(btn.style, {
-            position: 'absolute',
-            top: '12px',
-            right: '12px',
-            zIndex: '50',
-            background: 'var(--plugin-bg-input, white)',
-            border: '1px solid var(--plugin-border-light, #e0e0e0)',
-            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-            borderRadius: '50%',
-            width: '32px',
-            height: '32px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            opacity: '0',
-            transition: 'opacity 0.2s, transform 0.2s',
-            color: 'var(--plugin-icon-color)'
-        });
+        // Style based on view
+        if (isList) {
+            // List view: Insert into the actions column of the table row
+            // NotebookLM uses td.mat-column-actions or .actions-column
+            const actionsCell = card.querySelector('td.mat-column-actions, .actions-column, td:last-child, .cdk-column-actions');
 
-        if (getComputedStyle(card).position === 'static') {
-            card.style.position = 'relative';
+            Object.assign(btn.style, {
+                background: 'transparent',
+                border: 'none',
+                width: '28px',
+                height: '28px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                opacity: '0',
+                transition: 'opacity 0.2s, background 0.2s',
+                color: 'var(--plugin-icon-color)',
+                borderRadius: '4px',
+                marginRight: '8px',
+                padding: '4px'
+            });
+
+            if (actionsCell) {
+                // Insert at beginning of actions cell
+                actionsCell.insertBefore(btn, actionsCell.firstChild);
+                actionsCell.style.display = 'flex';
+                actionsCell.style.alignItems = 'center';
+                actionsCell.style.gap = '4px';
+            } else {
+                // Fallback: append to the row itself
+                card.style.position = 'relative';
+                btn.style.position = 'absolute';
+                btn.style.right = '48px';
+                btn.style.top = '50%';
+                btn.style.transform = 'translateY(-50%)';
+                card.appendChild(btn);
+            }
+        } else {
+            // Grid view: Absolute positioning in corner
+            Object.assign(btn.style, {
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                zIndex: '50',
+                background: 'var(--plugin-bg-input, white)',
+                border: '1px solid var(--plugin-border-light, #e0e0e0)',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                opacity: '0',
+                transition: 'opacity 0.2s, transform 0.2s',
+                color: 'var(--plugin-icon-color)'
+            });
+
+            if (getComputedStyle(card).position === 'static') {
+                card.style.position = 'relative';
+            }
+            card.appendChild(btn);
         }
-        card.appendChild(btn);
 
-        // Hover handling
+        // Hover handling for both views
         card.addEventListener('mouseenter', () => btn.style.opacity = '1');
         card.addEventListener('mouseleave', () => btn.style.opacity = '0');
 
-        btn.onmouseenter = () => btn.style.transform = 'scale(1.1)';
-        btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+        btn.onmouseenter = () => {
+            if (!isList) btn.style.transform = 'scale(1.1)';
+            else btn.style.backgroundColor = 'var(--plugin-bg-hover)';
+        };
+        btn.onmouseleave = () => {
+            if (!isList) btn.style.transform = 'scale(1)';
+            else btn.style.backgroundColor = 'transparent';
+        };
 
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Add folder button error:', e.message);
@@ -4735,6 +4544,12 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
 
         console.log(`[DEBUG] Attempting to move notebook: ${notebookUrl} to folder: ${folderId}`);
 
+        // Optimistic UI: Hide card immediately if moving TO a folder
+        if (folderId) {
+            // We don't hide it here anymore; processDashboardNotebooks handles hiding
+            // But we can add a visual cue if desired
+        }
+
         // Update state
         if (folderId) {
             dashboardState.mappings[notebookUrl] = folderId;
@@ -4742,31 +4557,41 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             delete dashboardState.mappings[notebookUrl];
         }
 
-        // Save through unified save path (includes _syncMeta + sync trigger)
-        saveDashboardState();
-
-        // Success flow - re-render after brief delay
-        setTimeout(() => {
-            const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
-            showToast(`Moved to ${folderName} ✓`);
-
-            // Force re-processing of the original card to generate proxy
-            if (cardEl) {
-                cardEl.classList.remove('plugin-dashboard-processed');
-                // If Uncategorized, ensure it's visible again
-                if (!folderId) {
-                    const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
-                    gridItem.style.display = '';
-                    gridItem.style.visibility = '';
-                    gridItem.classList.remove('plugin-hidden-grid-item');
-                    cardEl.dataset.pluginHidden = 'false';
-                    cardEl.classList.remove('card-fade-out');
-                }
+        // Save to storage
+        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
+            if (chrome.runtime.lastError) {
+                console.error('[NotebookLM FoldNest] Storage error:', chrome.runtime.lastError);
+                // Rollback on error
+                if (oldFolderId) dashboardState.mappings[notebookUrl] = oldFolderId;
+                else delete dashboardState.mappings[notebookUrl];
+                showToast("Failed to move notebook. Please try again.");
+                return;
             }
 
-            // Re-run the dashboard organizer to reflect changes (create proxy)
-            runDashboardOrganizer();
-        }, 50);
+            // Success flow
+            setTimeout(() => {
+                // Determine destination name for toast
+                const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
+                showToast(`Moved to ${folderName} ✓`);
+
+                // FIX: Force re-processing of the original card to generate proxy
+                if (cardEl) {
+                    cardEl.classList.remove('plugin-dashboard-processed');
+                    // If Uncategorized, ensure it's visible again
+                    if (!folderId) {
+                        const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
+                        gridItem.style.display = '';
+                        gridItem.style.visibility = '';
+                        gridItem.classList.remove('plugin-hidden-grid-item');
+                        cardEl.dataset.pluginHidden = 'false';
+                        cardEl.classList.remove('card-fade-out');
+                    }
+                }
+
+                // Re-run the dashboard organizer to reflect changes (create proxy)
+                runDashboardOrganizer();
+            }, 50);
+        });
 
     } catch (e) {
         console.error('[NotebookLM FoldNest] moveNotebookToFolder error:', e);
@@ -5147,9 +4972,8 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 dashboardState = Object.assign({}, dashboardState || DEFAULT_DASHBOARD_STATE, newState);
 
-                // Save directly WITHOUT triggering sync upload (we just downloaded this state).
-                // Using saveDashboardState() here would re-upload the data we just received.
-                chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState });
+                // Save locally (will trigger upload debounce if sync enabled)
+                saveDashboardState();
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {
@@ -5170,12 +4994,8 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 appState = Object.assign({}, appState, newState);
 
-                // Save directly WITHOUT triggering sync upload (we just downloaded this state).
-                // Using saveState() here would re-upload the data we just received.
-                const stateKey = getStorageKey('notebookTreeState');
-                if (stateKey) {
-                    chrome.storage.local.set({ [stateKey]: appState });
-                }
+                // Save locally (will trigger upload debounce if sync enabled)
+                saveState();
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {
