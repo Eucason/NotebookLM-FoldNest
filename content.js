@@ -198,8 +198,6 @@ const DEFAULT_SELECTORS = {
         '[data-test-id="notebook-item"]'
     ],
     notebookCardTitle: [
-        '.project-button-title',
-        '.featured-project-title',
         '.project-title',
         '.tile-title',
         '.mat-mdc-card-title',
@@ -213,42 +211,7 @@ const DEFAULT_SELECTORS = {
     ]
 };
 
-// --- SELECTOR HEURISTICS (For Auto-Repair) ---
-const SELECTOR_HEURISTICS = {
-    sourceRow: {
-        traits: [
-            { type: 'attribute', key: 'aria-label', value: /Source|Note/i },
-            { type: 'child', selector: 'mat-checkbox' },
-            { type: 'tag', value: 'div' }
-        ],
-        container: 'section.source-panel, .source-panel, [data-panel="source"]'
-    },
-    studioRow: {
-        traits: [
-            { type: 'tag', value: 'artifact-library-note' },
-            { type: 'tag', value: 'artifact-library-item' },
-            { type: 'attribute', key: 'class', value: /artifact/i }
-        ],
-        container: 'section.studio-panel, .studio-panel, [data-panel="studio"]'
-    },
-    sourceTitle: {
-        traits: [
-            { type: 'attribute', key: 'class', value: /title|name/i },
-            { type: 'attribute', key: 'aria-label', value: /title/i }
-        ],
-        parent: 'sourceRow'
-    },
-    studioTitle: {
-        traits: [
-            { type: 'tag', value: 'h3' },
-            { type: 'attribute', key: 'class', value: /title/i }
-        ],
-        parent: 'studioRow'
-    }
-};
-
 let activeSelectors = JSON.parse(JSON.stringify(DEFAULT_SELECTORS));
-let repairedSelectors = {}; // Track auto-fixed selectors
 
 // --- STATE ---
 const DEFAULT_STATE = {
@@ -273,7 +236,6 @@ const DEFAULT_DASHBOARD_STATE = {
     folders: {},           // { folderId: { id, name, parentId, order, isOpen, color } }
     mappings: {},          // { notebookId: folderId }
     pinned: [],            // pinned notebook IDs
-    titleCache: {},        // { notebookUrl: title } - persists titles across tab switches
     settings: {
         foldersOpen: true  // whether folder section is expanded
     }
@@ -1235,23 +1197,15 @@ function cleanup() {
 }
 
 // --- SELECTOR HEALTH MONITORING ---
-// --- SELECTOR HEALTH MONITORING & AUTO-REPAIR ---
 function checkSelectorHealth() {
     try {
         const health = {};
         const criticalSelectors = ['sourceRow', 'studioRow', 'sourceTitle', 'studioTitle'];
-        let needsRepair = false;
 
         for (const key of criticalSelectors) {
             const selector = activeSelectors[key];
             const found = safeQuery(document, selector);
             health[key] = !!found;
-            if (!found) needsRepair = true;
-        }
-
-        if (needsRepair) {
-            console.log('[NotebookLM FoldNest] UI changes detected. Attempting auto-repair...');
-            attemptSelectorRepair(criticalSelectors);
         }
 
         const failures = Object.entries(health).filter(([_, v]) => !v);
@@ -1276,160 +1230,6 @@ function checkSelectorHealth() {
     }
 }
 
-/**
- * Selector Repairman Module
- * Uses heuristics to find elements when primary selectors fail.
- */
-function attemptSelectorRepair(keys) {
-    let repairCount = 0;
-    const reportData = {
-        version: getExtensionVersion(),
-        timestamp: new Date().toISOString(),
-        repairs: []
-    };
-
-    for (const key of keys) {
-        if (safeQuery(document, activeSelectors[key])) continue; // Already working
-
-        const heuristic = SELECTOR_HEURISTICS[key];
-        if (!heuristic) {
-            console.debug(`[NotebookLM FoldNest] No heuristic defined for ${key}`);
-            continue;
-        }
-
-        console.debug(`[NotebookLM FoldNest] Attempting repair for ${key}...`);
-        const foundSelector = SelectorRepairman.discover(key, heuristic);
-
-        if (foundSelector) {
-            const oldSelector = activeSelectors[key];
-            activeSelectors[key] = [foundSelector, ...(Array.isArray(oldSelector) ? oldSelector : [oldSelector])];
-            repairedSelectors[key] = foundSelector;
-            repairCount++;
-
-            reportData.repairs.push({
-                key,
-                old: oldSelector,
-                new: foundSelector
-            });
-
-            console.log(`[NotebookLM FoldNest] ✓ Repaired ${key}: ${foundSelector}`);
-        } else {
-            console.debug(`[NotebookLM FoldNest] ✗ Could not repair ${key} - no matching elements found`);
-        }
-    }
-
-    if (repairCount > 0) {
-        chrome.storage.local.set({ repairedSelectors });
-        showRepairToast(reportData);
-    } else {
-        console.debug('[NotebookLM FoldNest] No repairs possible. Page may still be loading or selectors need manual update.');
-    }
-}
-
-const SelectorRepairman = {
-    discover: (key, heuristic) => {
-        let container = document;
-        if (heuristic.container) {
-            container = safeQuery(document, heuristic.container.split(',').map(s => s.trim())) || document;
-        } else if (heuristic.parent) {
-            // Find parent first
-            const parentElement = safeQuery(document, activeSelectors[heuristic.parent]);
-            if (parentElement) container = parentElement;
-        }
-
-        if (!container) return null;
-
-        // OPTIMIZED: Build targeted queries from traits instead of scanning all elements
-        const traits = heuristic.traits || [];
-        const candidateSelectors = [];
-
-        for (const trait of traits) {
-            if (trait.type === 'tag') {
-                candidateSelectors.push(trait.value);
-            } else if (trait.type === 'attribute') {
-                candidateSelectors.push(`[${trait.key}]`);
-            } else if (trait.type === 'child') {
-                candidateSelectors.push(`*:has(${trait.selector})`);
-            }
-        }
-
-        // Query only elements matching at least one trait
-        const queryString = candidateSelectors.join(', ');
-        if (!queryString) return null;
-
-        const candidates = container.querySelectorAll(queryString);
-        const scoredCandidates = [];
-
-        // Score each candidate
-        for (const el of candidates) {
-            let score = 0;
-
-            for (const trait of traits) {
-                if (trait.type === 'tag' && el.tagName.toLowerCase() === trait.value.toLowerCase()) score++;
-                else if (trait.type === 'attribute') {
-                    const attrVal = el.getAttribute(trait.key);
-                    if (attrVal && trait.value.test(attrVal)) score++;
-                } else if (trait.type === 'child') {
-                    if (el.querySelector(trait.selector)) score++;
-                }
-            }
-
-            const matchRate = score / traits.length;
-            if (matchRate >= 0.7) {
-                scoredCandidates.push({ el, score: matchRate });
-            }
-        }
-
-        if (scoredCandidates.length === 0) return null;
-
-        // Sort by score (highest first)
-        scoredCandidates.sort((a, b) => b.score - a.score);
-        const best = scoredCandidates[0].el;
-
-        // Generate a stable selector for the discovered element
-        return SelectorRepairman.generateSelector(best);
-    },
-
-    generateSelector: (el) => {
-        // Prefer ID
-        if (el.id) return `#${el.id}`;
-
-        // Prefer specific attribute combinations
-        const attrs = ['aria-label', 'data-source-id', 'data-note-id', 'role'];
-        for (const attr of attrs) {
-            const val = el.getAttribute(attr);
-            if (val) return `${el.tagName.toLowerCase()}[${attr}="${val}"]`;
-        }
-
-        // Class-based (cleaned of dynamic classes)
-        const classes = Array.from(el.classList).filter(c => !/mat-|plugin-|ng-|v-/.test(c));
-        if (classes.length > 0) {
-            return `${el.tagName.toLowerCase()}.${classes.join('.')}`;
-        }
-
-        return el.tagName.toLowerCase(); // Fallback
-    }
-};
-
-function showRepairToast(report) {
-    const message = `Auto-repaired ${report.repairs.length} selectors ✓`;
-    const toast = showToast(message, 'info', 5000);
-
-    // Add "Copy Report" button to toast if possible
-    if (toast) {
-        const btn = document.createElement('button');
-        btn.innerText = 'Copy Report';
-        btn.style.cssText = 'margin-left: 10px; background: #555; border: none; color: white; padding: 2px 8px; border-radius: 2px; cursor: pointer; pointer-events: auto;';
-        btn.onclick = () => {
-            navigator.clipboard.writeText(JSON.stringify(report, null, 2));
-            btn.innerText = 'Copied!';
-            setTimeout(() => btn.innerText = 'Copy Report', 2000);
-        };
-        toast.appendChild(btn);
-        toast.style.pointerEvents = 'auto'; // Enable interaction
-    }
-}
-
 // --- VERSION CHECK ---
 function checkVersionSync() {
     try {
@@ -1447,21 +1247,6 @@ function init() {
         cleanup();
         checkVersionSync();
         resetAllFeatures(); // Reset feature status on init
-
-        // Load repaired selectors from local storage
-        chrome.storage.local.get(['repairedSelectors'], (result) => {
-            if (result.repairedSelectors) {
-                repairedSelectors = result.repairedSelectors;
-                for (const key in repairedSelectors) {
-                    const sel = repairedSelectors[key];
-                    activeSelectors[key] = [sel, ...(Array.isArray(DEFAULT_SELECTORS[key]) ? DEFAULT_SELECTORS[key] : [DEFAULT_SELECTORS[key]])];
-                }
-                console.log('[NotebookLM FoldNest] Loaded repaired selectors:', repairedSelectors);
-            }
-
-            // Initial health check + potential repair after storage load
-            setTimeout(checkSelectorHealth, 1000);
-        });
 
         // v0.9.0: Detect page type and route accordingly
         const pageType = getPageType();
@@ -1631,13 +1416,8 @@ function saveState() {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
 
-        // Always include _syncMeta so sync conflict resolution works correctly.
-        // Without this, localTime is always 0 and remote overwrites local changes.
-        const stateToSave = {
-            ...appState,
-            _syncMeta: { lastModified: Date.now(), version: '1.0.0' }
-        };
-        chrome.storage.local.set({ [stateKey]: stateToSave }, () => {
+        // v0.8.5: Local-only storage (no sync limits to worry about)
+        chrome.storage.local.set({ [stateKey]: appState }, () => {
             if (chrome.runtime.lastError) {
                 console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
             } else {
@@ -2529,30 +2309,22 @@ function importFolders() {
     }
 }
 
-function showToast(message, type = 'info', duration = TOAST_DISPLAY_MS) {
+function showToast(message) {
     try {
         const existing = document.getElementById('plugin-toast');
         if (existing) existing.remove();
         const toast = document.createElement('div');
         toast.id = 'plugin-toast';
         toast.innerText = message;
-
-        // Dynamic styling based on type
-        const bgColor = type === 'success' ? '#2e7d32' : (type === 'warning' ? '#f57c00' : '#323232');
-
-        toast.style.cssText = `position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: ${bgColor}; color: #fff; padding: 10px 24px; border-radius: 4px; font-size: 14px; z-index: 10000; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;`;
-
+        toast.style.cssText = `position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: #323232; color: #fff; padding: 10px 24px; border-radius: 4px; font-size: 14px; z-index: 10000; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;`;
         document.body.appendChild(toast);
         requestAnimationFrame(() => toast.style.opacity = '1');
-
         setTimeout(() => {
             toast.style.opacity = '0';
             setTimeout(() => toast.remove(), TOAST_FADE_MS);
-        }, duration);
-
-        return toast;
+        }, TOAST_DISPLAY_MS);
     } catch (e) {
-        return null;
+        // Toast is non-critical
     }
 }
 
@@ -3511,66 +3283,54 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
 
     let iconElement;
     if (context === 'source') {
-        // [FIX v0.9.4] Check for favicon images FIRST (web sources use img, not mat-icon)
-        const nativeImg = nativeRow.querySelector('img.source-item-source-icon, img.favicon-icon');
+        const allIcons = nativeRow.querySelectorAll('mat-icon');
+        let nativeIcon = null;
+        const fileTypeIcons = ['drive_pdf', 'article', 'description', 'insert_drive_file',
+            'link', 'video_library', 'audio_file', 'image', 'folder',
+            'text_snippet', 'code', 'table_chart'];
 
-        if (nativeImg) {
-            // Clone the favicon image
-            iconElement = nativeImg.cloneNode(true);
-            iconElement.style.cssText = 'margin-right:8px; display:inline-flex; width:20px; height:20px; border-radius:2px; object-fit:contain;';
-        } else {
-            // Fallback: look for mat-icon (PDF, text, etc.)
-            const allIcons = nativeRow.querySelectorAll('mat-icon');
-            let nativeIcon = null;
-            const fileTypeIcons = ['drive_pdf', 'article', 'description', 'insert_drive_file',
-                'link', 'video_library', 'audio_file', 'image', 'folder',
-                'text_snippet', 'code', 'table_chart'];
-
-            for (const icon of allIcons) {
-                const iconName = (icon.textContent || icon.innerText || '').trim();
-                if (iconName === 'more_vert' || iconName === 'more_horiz' ||
-                    iconName === 'close' || iconName === 'check' || iconName === 'edit') {
-                    continue;
-                }
-                if (fileTypeIcons.includes(iconName) || !nativeIcon) {
-                    nativeIcon = icon;
-                    if (fileTypeIcons.includes(iconName)) break;
-                }
+        for (const icon of allIcons) {
+            const iconName = (icon.textContent || icon.innerText || '').trim();
+            if (iconName === 'more_vert' || iconName === 'more_horiz' ||
+                iconName === 'close' || iconName === 'check' || iconName === 'edit') {
+                continue;
             }
+            if (fileTypeIcons.includes(iconName) || !nativeIcon) {
+                nativeIcon = icon;
+                if (fileTypeIcons.includes(iconName)) break;
+            }
+        }
 
-            if (nativeIcon) {
-                const iconName = (nativeIcon.textContent || nativeIcon.innerText || '').trim();
-                if (iconName && iconName !== 'more_vert') {
-                    let iconColor = 'var(--plugin-icon-color)';
-                    try {
-                        const style = window.getComputedStyle(nativeIcon);
-                        if (style.color) iconColor = style.color;
-                    } catch (e) { }
+        if (nativeIcon) {
+            const iconName = (nativeIcon.textContent || nativeIcon.innerText || '').trim();
+            if (iconName && iconName !== 'more_vert') {
+                let iconColor = 'var(--plugin-icon-color)';
+                try {
+                    const style = window.getComputedStyle(nativeIcon);
+                    if (style.color) iconColor = style.color;
+                } catch (e) { }
 
-                    iconElement = document.createElement('mat-icon');
-                    iconElement.className = nativeIcon.className;
-                    iconElement.textContent = iconName;
-                    iconElement.setAttribute('aria-hidden', 'true');
-                    iconElement.setAttribute('data-mat-icon-type', 'font');
-                    iconElement.style.marginRight = '8px';
-                    iconElement.style.display = 'inline-flex';
-                    iconElement.style.alignItems = 'center';
-                    iconElement.style.fontSize = '20px';
-                    iconElement.style.width = '20px';
-                    iconElement.style.height = '20px';
-                    iconElement.style.color = iconColor;
-                } else {
-                    iconElement = nativeIcon.cloneNode(true);
-                    iconElement.style.marginRight = '8px';
-                    iconElement.style.display = 'flex';
-                }
-            } else {
-                // [FIX] Clean fallback: generic document SVG icon (replaces corrupted emoji string)
-                const wrapper = document.createElement('span');
-                wrapper.innerHTML = `<svg style="color:#8ab4f8;" xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>`;
-                iconElement = wrapper.firstElementChild;
+                iconElement = document.createElement('mat-icon');
+                iconElement.className = nativeIcon.className;
+                iconElement.textContent = iconName;
+                iconElement.setAttribute('aria-hidden', 'true');
+                iconElement.setAttribute('data-mat-icon-type', 'font');
                 iconElement.style.marginRight = '8px';
+                iconElement.style.display = 'inline-flex';
+                iconElement.style.alignItems = 'center';
+                iconElement.style.fontSize = '20px';
+                iconElement.style.width = '20px';
+                iconElement.style.height = '20px';
+                iconElement.style.color = iconColor;
+            } else {
+                iconElement = nativeIcon.cloneNode(true);
+                iconElement.style.marginRight = '8px';
+                iconElement.style.display = 'flex';
             }
+        } else {
+            iconElement = document.createElement('span');
+            iconElement.innerText = 'ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾';
+            iconElement.style.marginRight = '8px';
         }
     } else {
         // Studio panel: Find and clone the artifact icon
@@ -3748,32 +3508,6 @@ function injectMoveTrigger(row, text, context) {
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Inject move trigger error:', e.message);
     }
-}
-
-/**
- * Validates a title string to ensure it's not a garbled ID or obfuscated string.
- * @param {string} text 
- * @returns {boolean}
- */
-function isValidTitle(text) {
-    if (!text || typeof text !== 'string') return false;
-    const t = text.trim();
-    if (t.length < 2) return false;
-
-    // Reject known bad patterns (obfuscated IDs)
-    // e.g. "Ãf/Æ..." or very long strings with no spaces/common punctuation
-
-    // 1. Check for high density of extended ASCII/Unicode garbage if length is > 10
-    // This regex looks for 3+ consecutive non-ASCII chars which is rare in normal English titles
-    if (/[^\x00-\x7F]{3,}/.test(t) && t.length > 15) return false;
-
-    // 2. Check for "gibberish" - long string, no spaces, mixed case/numbers/symbols
-    if (t.length > 20 && !t.includes(' ')) {
-        // Allow URLs though (maybe)
-        if (!t.startsWith('http')) return false;
-    }
-
-    return true;
 }
 
 function showMoveMenu(e, text, context) {
@@ -4001,9 +3735,10 @@ function initDashboard() {
             if (!dashboardState.mappings) dashboardState.mappings = {};
             if (!dashboardState.pinned) dashboardState.pinned = [];
             if (!dashboardState.settings) dashboardState.settings = { foldersOpen: true };
-            if (!dashboardState.titleCache) dashboardState.titleCache = {};
 
-            // Note: folder isOpen state is preserved from storage (no longer forced closed on init)
+            if (dashboardState.folders) {
+                Object.values(dashboardState.folders).forEach(f => f.isOpen = false);
+            }
 
             console.debug('[NotebookLM FoldNest] Dashboard state loaded');
 
@@ -4030,17 +3765,9 @@ function saveDashboardState() {
     if (!chrome?.runtime?.id) return;
 
     try {
-        // Always include _syncMeta so sync conflict resolution works correctly.
-        // Without this, localTime is always 0 and remote overwrites local changes.
-        const stateToSave = {
-            ...dashboardState,
-            _syncMeta: { lastModified: Date.now(), version: '1.0.0' }
-        };
+        // Preserve _syncMeta timestamp for sync conflict resolution
+        const stateToSave = { ...dashboardState, _syncMeta: { lastModified: Date.now(), version: '1.0.0' } };
         chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: stateToSave }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
-                return;
-            }
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
             if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
                 window.FoldNestSync.triggerUpload('dashboard');
@@ -4453,7 +4180,7 @@ function processDashboardNotebooks() {
             // Skip the "Create new" card
             if (card.classList.contains('create-new-action-button')) return;
 
-            const notebookUrl = getCanonicalNotebookUrl(card);
+            const notebookUrl = getNotebookFullUrl(card);
             if (!notebookUrl) {
                 return;
             }
@@ -4463,11 +4190,6 @@ function processDashboardNotebooks() {
             // CRITICAL FIX: Extract and cache title BEFORE any operations
             // This ensures the title is captured while the card is still visible and accessible
             const title = getNotebookTitleFromCard(card);
-
-            // Cache the title so it persists across tab switches
-            if (title && notebookUrl && title !== notebookUrl) {
-                dashboardState.titleCache[notebookUrl] = title;
-            }
 
             // Store title in card's dataset for persistence
             if (card.dataset) {
@@ -4486,13 +4208,6 @@ function processDashboardNotebooks() {
                 const pFolderId = p.parentElement?.dataset?.folderId;
                 if (pFolderId !== folderId) {
                     p.remove();
-                } else if (title) {
-                    // Update title on same-folder proxy (may have fallback title from restoreMappedNotebooks)
-                    const titleEl = p.querySelector('.proxy-title');
-                    if (titleEl && titleEl.textContent !== title) {
-                        titleEl.textContent = title;
-                    }
-                    if (p.dataset) p.dataset.title = title;
                 }
             });
 
@@ -4526,44 +4241,8 @@ function processDashboardNotebooks() {
             card.classList.add('plugin-dashboard-processed');
         });
 
-        // Restore proxies for notebooks mapped to folders but not visible in current tab
-        restoreMappedNotebooks();
-
-        // Persist title cache for future loads
-        saveDashboardState();
-
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Process dashboard notebooks error:', e.message);
-    }
-}
-
-/**
- * Restore proxy items for notebooks that are mapped to folders but not
- * currently visible in the DOM (e.g. user is on Featured tab but notebook
- * is from My Notebooks). Uses the persisted titleCache for display names.
- */
-function restoreMappedNotebooks() {
-    try {
-        const mappings = dashboardState.mappings || {};
-        Object.entries(mappings).forEach(([notebookUrl, folderId]) => {
-            if (!folderId || !dashboardState.folders[folderId]) return;
-
-            // Extract notebook ID from URL
-            const match = notebookUrl.match(/\/notebook\/([^/]+)$/);
-            if (!match) return;
-            const notebookId = match[1];
-
-            // Skip if proxy already exists (card was in the DOM and already processed)
-            if (document.querySelector(`.plugin-proxy-item[data-notebook-id="${notebookId}"]`)) return;
-
-            // Use cached title, fall back to truncated ID
-            const title = (dashboardState.titleCache && dashboardState.titleCache[notebookUrl])
-                || `Notebook ${notebookId.slice(0, 8)}\u2026`;
-
-            addNotebookToFolderView(notebookId, title, folderId, null);
-        });
-    } catch (e) {
-        console.debug('[NotebookLM FoldNest] Restore mapped notebooks error:', e.message);
     }
 }
 
@@ -4571,16 +4250,14 @@ function restoreMappedNotebooks() {
  * Add a "move to folder" button to a notebook card
  */
 /**
- * Add a "move to folder" button to a notebook card (Grid view only)
+ * Add a "move to folder" button to a notebook card
  */
 function addFolderButtonToCard(card, notebookId, title) {
     try {
         if (card.querySelector('.plugin-add-to-folder-btn')) return;
 
-        // Only add button in Grid view, skip List view
-        if (isListView()) return;
-
-        const notebookUrl = getCanonicalNotebookUrl(card);
+        const isList = isListView();
+        const notebookUrl = getNotebookFullUrl(card);
         if (!notebookUrl) return;
 
         let lastClickTime = 0;
@@ -4599,38 +4276,84 @@ function addFolderButtonToCard(card, notebookId, title) {
             }
         }, [getIconElement('addToFolder')]);
 
-        // Grid view: Absolute positioning in corner
-        Object.assign(btn.style, {
-            position: 'absolute',
-            top: '12px',
-            right: '12px',
-            zIndex: '50',
-            background: 'var(--plugin-bg-input, white)',
-            border: '1px solid var(--plugin-border-light, #e0e0e0)',
-            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-            borderRadius: '50%',
-            width: '32px',
-            height: '32px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            opacity: '0',
-            transition: 'opacity 0.2s, transform 0.2s',
-            color: 'var(--plugin-icon-color)'
-        });
+        // Style based on view
+        if (isList) {
+            // List view: Insert into the actions column of the table row
+            // NotebookLM uses td.mat-column-actions or .actions-column
+            const actionsCell = card.querySelector('td.mat-column-actions, .actions-column, td:last-child, .cdk-column-actions');
 
-        if (getComputedStyle(card).position === 'static') {
-            card.style.position = 'relative';
+            Object.assign(btn.style, {
+                background: 'transparent',
+                border: 'none',
+                width: '28px',
+                height: '28px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                opacity: '0',
+                transition: 'opacity 0.2s, background 0.2s',
+                color: 'var(--plugin-icon-color)',
+                borderRadius: '4px',
+                marginRight: '8px',
+                padding: '4px'
+            });
+
+            if (actionsCell) {
+                // Insert at beginning of actions cell
+                actionsCell.insertBefore(btn, actionsCell.firstChild);
+                actionsCell.style.display = 'flex';
+                actionsCell.style.alignItems = 'center';
+                actionsCell.style.gap = '4px';
+            } else {
+                // Fallback: append to the row itself
+                card.style.position = 'relative';
+                btn.style.position = 'absolute';
+                btn.style.right = '48px';
+                btn.style.top = '50%';
+                btn.style.transform = 'translateY(-50%)';
+                card.appendChild(btn);
+            }
+        } else {
+            // Grid view: Absolute positioning in corner
+            Object.assign(btn.style, {
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                zIndex: '50',
+                background: 'var(--plugin-bg-input, white)',
+                border: '1px solid var(--plugin-border-light, #e0e0e0)',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                opacity: '0',
+                transition: 'opacity 0.2s, transform 0.2s',
+                color: 'var(--plugin-icon-color)'
+            });
+
+            if (getComputedStyle(card).position === 'static') {
+                card.style.position = 'relative';
+            }
+            card.appendChild(btn);
         }
-        card.appendChild(btn);
 
-        // Hover handling
+        // Hover handling for both views
         card.addEventListener('mouseenter', () => btn.style.opacity = '1');
         card.addEventListener('mouseleave', () => btn.style.opacity = '0');
 
-        btn.onmouseenter = () => btn.style.transform = 'scale(1.1)';
-        btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+        btn.onmouseenter = () => {
+            if (!isList) btn.style.transform = 'scale(1.1)';
+            else btn.style.backgroundColor = 'var(--plugin-bg-hover)';
+        };
+        btn.onmouseleave = () => {
+            if (!isList) btn.style.transform = 'scale(1)';
+            else btn.style.backgroundColor = 'transparent';
+        };
 
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Add folder button error:', e.message);
@@ -4648,19 +4371,8 @@ function addNotebookToFolderView(notebookId, title, folderId, originalCard) {
         const itemsMount = document.querySelector(`.plugin-dashboard-folder-items[data-folder-id="${folderId}"]`);
         if (!itemsMount) return;
 
-        // Check if already added — if so, update title and return
-        const existingProxy = itemsMount.querySelector(`[data-notebook-id="${notebookId}"]`);
-        if (existingProxy) {
-            // Update title if we now have a better one (e.g. from a real card vs fallback ID)
-            if (title) {
-                const titleEl = existingProxy.querySelector('.proxy-title');
-                if (titleEl && titleEl.textContent !== title) {
-                    titleEl.textContent = title;
-                }
-                if (existingProxy.dataset) existingProxy.dataset.title = title;
-            }
-            return;
-        }
+        // Check if already added
+        if (itemsMount.querySelector(`[data-notebook-id="${notebookId}"]`)) return;
 
         const proxy = createEl('div', {
             className: 'plugin-proxy-item plugin-dashboard-notebook',
@@ -4679,7 +4391,7 @@ function addNotebookToFolderView(notebookId, title, folderId, originalCard) {
                 onclick: (e) => {
                     e.stopPropagation();
                     // Use full URL to remove mapping
-                    const notebookUrl = originalCard ? getCanonicalNotebookUrl(originalCard) : window.location.origin + '/notebook/' + notebookId;
+                    const notebookUrl = originalCard ? getNotebookFullUrl(originalCard) : window.location.origin + '/notebook/' + notebookId;
                     delete dashboardState.mappings[notebookUrl];
                     saveDashboardState();
 
@@ -4834,6 +4546,12 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
 
         console.log(`[DEBUG] Attempting to move notebook: ${notebookUrl} to folder: ${folderId}`);
 
+        // Optimistic UI: Hide card immediately if moving TO a folder
+        if (folderId) {
+            // We don't hide it here anymore; processDashboardNotebooks handles hiding
+            // But we can add a visual cue if desired
+        }
+
         // Update state
         if (folderId) {
             dashboardState.mappings[notebookUrl] = folderId;
@@ -4841,7 +4559,7 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             delete dashboardState.mappings[notebookUrl];
         }
 
-        // Save through unified save path (includes _syncMeta + sync trigger)
+        // Save to storage via unified save path (includes _syncMeta + sync trigger)
         saveDashboardState();
 
         // Success flow - re-render after brief delay
@@ -4849,7 +4567,7 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
             showToast(`Moved to ${folderName} ✓`);
 
-            // Force re-processing of the original card to generate proxy
+            // FIX: Force re-processing of the original card to generate proxy
             if (cardEl) {
                 cardEl.classList.remove('plugin-dashboard-processed');
                 // If Uncategorized, ensure it's visible again
@@ -5246,9 +4964,9 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 dashboardState = Object.assign({}, dashboardState || DEFAULT_DASHBOARD_STATE, newState);
 
-                // Save directly WITHOUT triggering sync upload (we just downloaded this state).
-                // Using saveDashboardState() here would re-upload the data we just received.
-                chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState });
+                // Save directly WITHOUT triggering sync upload (we just downloaded this)
+                const stateToSave = { ...dashboardState, _syncMeta: newState._syncMeta || { lastModified: Date.now(), version: '1.0.0' } };
+                chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: stateToSave });
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {
@@ -5269,12 +4987,8 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 appState = Object.assign({}, appState, newState);
 
-                // Save directly WITHOUT triggering sync upload (we just downloaded this state).
-                // Using saveState() here would re-upload the data we just received.
-                const stateKey = getStorageKey('notebookTreeState');
-                if (stateKey) {
-                    chrome.storage.local.set({ [stateKey]: appState });
-                }
+                // Save locally (will trigger upload debounce if sync enabled)
+                saveState();
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {
@@ -5302,43 +5016,5 @@ window.NotebookLMFoldNest = {
         }
     }
 };
-
-// --- [FIX] HELPER FUNCTIONS (Robust Implementations) ---
-
-/**
- * Safely extracts the canonical URL for a notebook from its card.
- * @param {HTMLElement} card 
- * @returns {string|null}
- */
-function getCanonicalNotebookUrl(card) {
-    if (!card) return null;
-
-    // Strategy 1: Try to find a direct <a> link (legacy NotebookLM DOM)
-    const link = (card.tagName === 'A' && card.href && card.href.includes('/notebook/'))
-        ? card
-        : card.querySelector('a[href*="/notebook/"]')
-        || card.closest('a[href*="/notebook/"]');
-    if (link) {
-        try {
-            const url = new URL(link.href, window.location.origin);
-            const path = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
-            return url.origin + path;
-        } catch (e) { /* fall through */ }
-    }
-
-    // Strategy 2: Construct URL from extracted notebook ID (current NotebookLM DOM)
-    // NotebookLM no longer uses <a> links for notebook cards — navigation is button-based.
-    // The notebook UUID is embedded in aria-labelledby / element id attributes.
-    const notebookId = getNotebookIdFromCard(card);
-    if (notebookId) {
-        return window.location.origin + '/notebook/' + notebookId;
-    }
-
-    return null;
-}
-
-// NOTE: getNotebookIdFromCard is defined at line ~1058 (robust version with tagName, parent, data-attr checks)
-// NOTE: getNotebookTitleFromCard is defined at line ~1169 (robust version with caching, list-view, and fallbacks)
-// Duplicate definitions were removed here to prevent shadowing the robust implementations above.
 
 init();
