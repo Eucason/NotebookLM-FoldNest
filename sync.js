@@ -569,6 +569,8 @@
                             _syncMeta: syncMeta
                         };
                         await chrome.storage.local.set({ [stateKey]: updatedState });
+                    } else {
+                        console.warn('[FoldNest Sync] Could not extract notebook ID from URL, local storage not updated with upload timestamp');
                     }
                 }
 
