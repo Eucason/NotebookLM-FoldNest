@@ -1628,8 +1628,13 @@ function saveState() {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
 
-        // v0.8.5: Local-only storage (no sync limits to worry about)
-        chrome.storage.local.set({ [stateKey]: appState }, () => {
+        // Always include _syncMeta so sync conflict resolution works correctly.
+        // Without this, localTime is always 0 and remote overwrites local changes.
+        const stateToSave = {
+            ...appState,
+            _syncMeta: { lastModified: Date.now(), version: '1.0.0' }
+        };
+        chrome.storage.local.set({ [stateKey]: stateToSave }, () => {
             if (chrome.runtime.lastError) {
                 console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
             } else {
@@ -3985,7 +3990,17 @@ function saveDashboardState() {
     if (!chrome?.runtime?.id) return;
 
     try {
-        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
+        // Always include _syncMeta so sync conflict resolution works correctly.
+        // Without this, localTime is always 0 and remote overwrites local changes.
+        const stateToSave = {
+            ...dashboardState,
+            _syncMeta: { lastModified: Date.now(), version: '1.0.0' }
+        };
+        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: stateToSave }, () => {
+            if (chrome.runtime.lastError) {
+                console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
+                return;
+            }
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
             if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
                 window.FoldNestSync.triggerUpload('dashboard');
@@ -4720,12 +4735,6 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
 
         console.log(`[DEBUG] Attempting to move notebook: ${notebookUrl} to folder: ${folderId}`);
 
-        // Optimistic UI: Hide card immediately if moving TO a folder
-        if (folderId) {
-            // We don't hide it here anymore; processDashboardNotebooks handles hiding
-            // But we can add a visual cue if desired
-        }
-
         // Update state
         if (folderId) {
             dashboardState.mappings[notebookUrl] = folderId;
@@ -4733,41 +4742,31 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             delete dashboardState.mappings[notebookUrl];
         }
 
-        // Save to storage
-        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('[NotebookLM FoldNest] Storage error:', chrome.runtime.lastError);
-                // Rollback on error
-                if (oldFolderId) dashboardState.mappings[notebookUrl] = oldFolderId;
-                else delete dashboardState.mappings[notebookUrl];
-                showToast("Failed to move notebook. Please try again.");
-                return;
+        // Save through unified save path (includes _syncMeta + sync trigger)
+        saveDashboardState();
+
+        // Success flow - re-render after brief delay
+        setTimeout(() => {
+            const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
+            showToast(`Moved to ${folderName} ✓`);
+
+            // Force re-processing of the original card to generate proxy
+            if (cardEl) {
+                cardEl.classList.remove('plugin-dashboard-processed');
+                // If Uncategorized, ensure it's visible again
+                if (!folderId) {
+                    const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
+                    gridItem.style.display = '';
+                    gridItem.style.visibility = '';
+                    gridItem.classList.remove('plugin-hidden-grid-item');
+                    cardEl.dataset.pluginHidden = 'false';
+                    cardEl.classList.remove('card-fade-out');
+                }
             }
 
-            // Success flow
-            setTimeout(() => {
-                // Determine destination name for toast
-                const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
-                showToast(`Moved to ${folderName} ✓`);
-
-                // FIX: Force re-processing of the original card to generate proxy
-                if (cardEl) {
-                    cardEl.classList.remove('plugin-dashboard-processed');
-                    // If Uncategorized, ensure it's visible again
-                    if (!folderId) {
-                        const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
-                        gridItem.style.display = '';
-                        gridItem.style.visibility = '';
-                        gridItem.classList.remove('plugin-hidden-grid-item');
-                        cardEl.dataset.pluginHidden = 'false';
-                        cardEl.classList.remove('card-fade-out');
-                    }
-                }
-
-                // Re-run the dashboard organizer to reflect changes (create proxy)
-                runDashboardOrganizer();
-            }, 50);
-        });
+            // Re-run the dashboard organizer to reflect changes (create proxy)
+            runDashboardOrganizer();
+        }, 50);
 
     } catch (e) {
         console.error('[NotebookLM FoldNest] moveNotebookToFolder error:', e);
@@ -5148,8 +5147,9 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 dashboardState = Object.assign({}, dashboardState || DEFAULT_DASHBOARD_STATE, newState);
 
-                // Save locally (will trigger upload debounce if sync enabled)
-                saveDashboardState();
+                // Save directly WITHOUT triggering sync upload (we just downloaded this state).
+                // Using saveDashboardState() here would re-upload the data we just received.
+                chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState });
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {
@@ -5170,8 +5170,12 @@ window.NotebookLMFoldNest = {
                 // Simple merge for v1 (Object.assign)
                 appState = Object.assign({}, appState, newState);
 
-                // Save locally (will trigger upload debounce if sync enabled)
-                saveState();
+                // Save directly WITHOUT triggering sync upload (we just downloaded this state).
+                // Using saveState() here would re-upload the data we just received.
+                const stateKey = getStorageKey('notebookTreeState');
+                if (stateKey) {
+                    chrome.storage.local.set({ [stateKey]: appState });
+                }
 
                 // Delayed render/process to let DOM settle
                 setTimeout(() => {
