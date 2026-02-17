@@ -1421,6 +1421,12 @@ function startUrlWatcher() {
             } else if (newNotebookId && !currentNotebookId) {
                 currentNotebookId = newNotebookId;
                 init();
+            } else if (!newNotebookId && currentNotebookId) {
+                // Handle transition from Notebook -> Dashboard
+                console.debug('[NotebookLM FoldNest] Transitioned to Dashboard');
+                currentNotebookId = null;
+                cleanup(); // Ensure we clean up notebook observers
+                init(); // Re-run init to detect dashboard and inject UI
             }
         } catch (e) {
             console.debug('[NotebookLM FoldNest] URL watcher error:', e.message);
@@ -4948,7 +4954,7 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             setTimeout(() => {
                 // Determine destination name for toast
                 const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
-                showToast(`Moved to ${folderName} âœ“`);
+                showToast(`Moved to ${folderName} \u2713`);
 
                 // FIX: Force re-processing of the original card to generate proxy
                 if (cardEl) {
@@ -5356,7 +5362,7 @@ window.NotebookLMFoldNest = {
                     try {
                         renderDashboardTree();
                         processDashboardNotebooks();
-                        showToast('Dashboard synced from cloud âœ“', 'success');
+                        showToast('Dashboard synced from cloud \u2713', 'success');
                         console.log('[NotebookLM FoldNest] Dashboard state applied successfully');
                     } catch (renderErr) {
                         console.error('[NotebookLM FoldNest] Dashboard render failed after applyState:', renderErr);
@@ -5384,7 +5390,7 @@ window.NotebookLMFoldNest = {
                         safeProcessItems('source');
                         safeProcessItems('studio');
 
-                        showToast('Synced from cloud âœ“', 'success');
+                        showToast('Synced from cloud \u2713', 'success');
                         console.log('[NotebookLM FoldNest] Notebook state applied successfully');
                     } catch (renderErr) {
                         console.error('[NotebookLM FoldNest] Notebook render failed after applyState:', renderErr);
@@ -5617,7 +5623,7 @@ function bulkMoveSelectedToFolder(selectedRows, folderId, folderName) {
     });
 
     saveDashboardState();
-    showToast(`Moved ${moved} notebooks to "${folderName}" âœ“`);
+    showToast(`Moved ${moved} notebooks to "${folderName}" \u2713`);
     setTimeout(() => runDashboardOrganizer(), 50);
     exitDashboardBulkSelect();
 }
