@@ -40,13 +40,6 @@ body.dark-theme {
     display: none !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    visibility: hidden !important;
-}
-
-/* Ensure table rows are fully collapsed */
-tr.plugin-hidden-native,
-.mat-mdc-row.plugin-hidden-native {
-    display: none !important;
 }
 
 .plugin-hidden-grid-item {
@@ -583,9 +576,7 @@ tr:hover .plugin-add-to-folder-btn {
     width: 260px;
     padding: 6px 0;
     font-family: 'Google Sans', Roboto, sans-serif;
-    font-family: 'Google Sans', Roboto, sans-serif;
     animation: plugin-fade-in 0.15s ease-out;
-    pointer-events: auto !important;
 }
 
 @keyframes plugin-fade-in {
@@ -608,9 +599,7 @@ tr:hover .plugin-add-to-folder-btn {
     display: flex;
     align-items: center;
     gap: 12px;
-    gap: 12px;
     transition: background 0.2s;
-    pointer-events: auto !important;
 }
 
 .plugin-dropdown-item:hover {
@@ -1603,8 +1592,11 @@ body.plugin-sidebar-open .mat-sidenav-container {
     color: #d93025;
 }
 
-/* Add to folder button on notebook cards and rows */
+/* Add to folder button on notebook cards */
 .plugin-add-to-folder-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
     z-index: 10;
     background: var(--plugin-bg);
     border: 1px solid var(--plugin-border-light);
@@ -1616,29 +1608,14 @@ body.plugin-sidebar-open .mat-sidenav-container {
     justify-content: center;
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.2s, background 0.15s, border-color 0.15s, transform 0.2s;
+    transition: opacity 0.2s, background 0.15s, border-color 0.15s;
     color: var(--plugin-icon-color);
-}
-
-.plugin-list-view-btn {
-    width: 28px;
-    height: 28px;
-    background: rgba(255, 255, 255, 0.05);
-    /* Slight visibility */
-}
-
-/* Grid view specific (absolute positioning) */
-.plugin-dashboard-item .plugin-add-to-folder-btn {
-    position: absolute;
-    top: 8px;
-    right: 8px;
 }
 
 .plugin-add-to-folder-btn:hover {
     background: var(--plugin-bg-hover);
     border-color: var(--plugin-accent);
     color: var(--plugin-accent);
-    transform: scale(1.1);
 }
 
 .plugin-add-to-folder-btn svg {
@@ -1700,8 +1677,6 @@ body.plugin-sidebar-open .mat-sidenav-container {
 
 .foldnest-sync-btn:hover {
     background: var(--plugin-bg-hover);
-}
-
 /* --- SYNC MODULE STYLES (v0.9.3) --- */
 .foldnest-sync-btn {
     position: relative;
@@ -1716,13 +1691,8 @@ body.plugin-sidebar-open .mat-sidenav-container {
 }
 
 @keyframes sync-spin {
-    from {
-        transform: rotate(0deg);
-    }
-
-    to {
-        transform: rotate(360deg);
-    }
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 .foldnest-sync-status {
@@ -1738,31 +1708,15 @@ body.plugin-sidebar-open .mat-sidenav-container {
 }
 
 .foldnest-sync-status.syncing {
-    background: #fbbc04;
-    /* Yellow - syncing */
+    background: #fbbc04; /* Yellow - syncing */
 }
 
 .foldnest-sync-status.success {
-    background: #34a853;
-    /* Green - success */
+    background: #34a853; /* Green - success */
 }
 
 .foldnest-sync-status.error {
-    background: #ea4335;
-    /* Red - error */
-}
-
-.foldnest-sync-status.offline {
-    background: #9e9e9e;
-    /* Gray - offline */
-}
-
-.foldnest-sync-btn.offline {
-    opacity: 0.6;
-}
-
-.foldnest-sync-btn.offline svg {
-    color: #9e9e9e;
+    background: #ea4335; /* Red - error */
 }
 
 .foldnest-sync-menu {
@@ -1784,110 +1738,4 @@ body.plugin-sidebar-open .mat-sidenav-container {
     .plugin-dashboard-notebook {
         padding: 8px 10px;
     }
-}
-
-/* --- DASHBOARD MENU INTEGRATION --- */
-.plugin-menu-separator {
-    height: 1px;
-    background: var(--plugin-border-light);
-    margin: 8px 0;
-}
-
-.plugin-injected-menu-item.plugin-menu-item-btn {
-    height: 48px;
-    padding: 0 16px;
-    display: flex;
-    align-items: center;
-    width: 100%;
-    border: none;
-    background: transparent;
-    color: var(--plugin-text);
-    font-size: 14px;
-    cursor: pointer;
-    text-align: left;
-}
-
-.plugin-injected-menu-item.plugin-menu-item-btn:hover {
-    background: var(--plugin-bg-hover);
-}
-
-.plugin-menu-item-icon {
-    margin-right: 12px;
-    display: flex;
-    align-items: center;
-    color: var(--plugin-icon-color);
-}
-
-/* --- BULK SELECT UI --- */
-.plugin-bulk-checkbox-wrap {
-    display: inline-flex;
-    align-items: center;
-    margin-right: 12px;
-    cursor: pointer;
-}
-
-.plugin-bulk-checkbox {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-}
-
-body.plugin-bulk-select-active .mat-mdc-row td:first-child {
-    display: flex;
-    align-items: center;
-}
-
-#plugin-bulk-action-bar {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%) translateY(120px);
-    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-    background: var(--plugin-bg);
-    border: 1px solid var(--plugin-border-light);
-    border-radius: 999px;
-    padding: 8px 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    z-index: 10000;
-    color: var(--plugin-text);
-}
-
-#plugin-bulk-action-bar.visible {
-    transform: translateX(-50%) translateY(0);
-}
-
-#plugin-bulk-count {
-    font-weight: 500;
-    font-size: 14px;
-    white-space: nowrap;
-}
-
-.plugin-bulk-btn {
-    padding: 6px 16px;
-    border-radius: 20px;
-    border: 1px solid var(--plugin-border-light);
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.2s;
-    background: transparent;
-    color: var(--plugin-text);
-}
-
-.plugin-bulk-move {
-    background: var(--plugin-accent);
-    color: white;
-    border-color: var(--plugin-accent);
-}
-
-.plugin-bulk-move:hover {
-    filter: brightness(1.1);
-}
-
-.plugin-bulk-cancel:hover {
-    background: var(--plugin-bg-hover);
-}
 }
