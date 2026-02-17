@@ -40,6 +40,13 @@ body.dark-theme {
     display: none !important;
     opacity: 0 !important;
     pointer-events: none !important;
+    visibility: hidden !important;
+}
+
+/* Ensure table rows are fully collapsed */
+tr.plugin-hidden-native,
+.mat-mdc-row.plugin-hidden-native {
+    display: none !important;
 }
 
 .plugin-hidden-grid-item {
@@ -1677,77 +1684,87 @@ body.plugin-sidebar-open .mat-sidenav-container {
 
 .foldnest-sync-btn:hover {
     background: var(--plugin-bg-hover);
-/* --- SYNC MODULE STYLES (v0.9.3) --- */
-.foldnest-sync-btn {
-    position: relative;
-}
 
-.foldnest-sync-btn.enabled {
-    color: var(--plugin-accent);
-}
-
-.foldnest-sync-btn.syncing svg {
-    animation: sync-spin 1s linear infinite;
-}
-
-@keyframes sync-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-
-.foldnest-sync-status {
-    position: absolute;
-    bottom: 2px;
-    right: 2px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: transparent;
-    transition: background 0.2s ease;
-    pointer-events: none;
-}
-
-.foldnest-sync-status.syncing {
-    background: #fbbc04; /* Yellow - syncing */
-}
-
-.foldnest-sync-status.success {
-    background: #34a853; /* Green - success */
-}
-
-.foldnest-sync-status.error {
-    background: #ea4335; /* Red - error */
-}
-
-.foldnest-sync-status.offline {
-    background: #9e9e9e; /* Gray - offline */
-}
-
-.foldnest-sync-btn.offline {
-    opacity: 0.6;
-}
-
-.foldnest-sync-btn.offline svg {
-    color: #9e9e9e;
-}
-
-.foldnest-sync-menu {
-    min-width: 160px;
-}
-
-.foldnest-sync-menu .plugin-dropdown-item.disabled {
-    pointer-events: none;
-    cursor: default;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .plugin-dashboard-container {
-        padding: 12px;
-        margin: 0 8px 12px 8px;
+    /* --- SYNC MODULE STYLES (v0.9.3) --- */
+    .foldnest-sync-btn {
+        position: relative;
     }
 
-    .plugin-dashboard-notebook {
-        padding: 8px 10px;
+    .foldnest-sync-btn.enabled {
+        color: var(--plugin-accent);
     }
-}
+
+    .foldnest-sync-btn.syncing svg {
+        animation: sync-spin 1s linear infinite;
+    }
+
+    @keyframes sync-spin {
+        from {
+            transform: rotate(0deg);
+        }
+
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .foldnest-sync-status {
+        position: absolute;
+        bottom: 2px;
+        right: 2px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: transparent;
+        transition: background 0.2s ease;
+        pointer-events: none;
+    }
+
+    .foldnest-sync-status.syncing {
+        background: #fbbc04;
+        /* Yellow - syncing */
+    }
+
+    .foldnest-sync-status.success {
+        background: #34a853;
+        /* Green - success */
+    }
+
+    .foldnest-sync-status.error {
+        background: #ea4335;
+        /* Red - error */
+    }
+
+    .foldnest-sync-status.offline {
+        background: #9e9e9e;
+        /* Gray - offline */
+    }
+
+    .foldnest-sync-btn.offline {
+        opacity: 0.6;
+    }
+
+    .foldnest-sync-btn.offline svg {
+        color: #9e9e9e;
+    }
+
+    .foldnest-sync-menu {
+        min-width: 160px;
+    }
+
+    .foldnest-sync-menu .plugin-dropdown-item.disabled {
+        pointer-events: none;
+        cursor: default;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .plugin-dashboard-container {
+            padding: 12px;
+            margin: 0 8px 12px 8px;
+        }
+
+        .plugin-dashboard-notebook {
+            padding: 8px 10px;
+        }
+    }

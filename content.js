@@ -234,7 +234,9 @@ let isProcessingItems = false; // Race condition guard for processItems
 const DASHBOARD_STATE_KEY = 'notebookLM_dashboardFolders';
 const DEFAULT_DASHBOARD_STATE = {
     folders: {},           // { folderId: { id, name, parentId, order, isOpen, color } }
-    mappings: {},          // { notebookId: folderId }
+    mappings: {},          // { notebookUrl: folderId }
+    idMappings: {},        // { notebookId: folderId } - Parallel index for ID-based lookup
+    notebookTitles: {},    // Cache for title-based matching
     pinned: [],            // pinned notebook IDs
     settings: {
         foldersOpen: true  // whether folder section is expanded
@@ -1024,75 +1026,60 @@ function getNotebookIdFromCard(card) {
     try {
         if (!card) return null;
 
-        // Try to extract from href within or on the card
+        // 1. Standard href check (Generic)
         const link = card.tagName === 'A' ? card : card.querySelector('a[href*="/notebook/"]');
         if (link && link.href) {
             const match = link.href.match(/\/notebook\/([^\/\?]+)/);
             if (match) return match[1];
         }
 
-        // Try parent link (card might be inside an <a> tag)
+        // 2. Parent link check
         const parentLink = card.closest('a[href*="/notebook/"]');
         if (parentLink && parentLink.href) {
             const match = parentLink.href.match(/\/notebook\/([^\/\?]+)/);
             if (match) return match[1];
         }
 
-        // Try data attribute
-        if (card.dataset && card.dataset.notebookId) {
-            return card.dataset.notebookId;
+        // 3. Angular/Router attributes (Part 4)
+        const routerLinkEl = card.querySelector('[ng-reflect-router-link*="notebook"], [routerLink*="notebook"]');
+        if (routerLinkEl) {
+            const routerVal = routerLinkEl.getAttribute('ng-reflect-router-link')
+                || routerLinkEl.getAttribute('routerLink');
+            const match = routerVal && routerVal.match(/notebook\/([^\/\?]+)/);
+            if (match) return match[1];
         }
 
-        // Try to find any parent with notebook data
-        const parent = card.closest('[data-notebook-id]');
-        if (parent && parent.dataset.notebookId) {
-            return parent.dataset.notebookId;
-        }
+        // 4. Data attributes
+        if (card.dataset && card.dataset.notebookId) return card.dataset.notebookId;
+        const dataParent = card.closest('[data-notebook-id]');
+        if (dataParent && dataParent.dataset.notebookId) return dataParent.dataset.notebookId;
 
-        // Try to extract from id attributes like "project-{uuid}-title" or aria-labelledby
+        // 5. Deep Systematic Scan (Part 4)
         const idPattern = /project-([a-f0-9-]{36})/i;
 
-        // Check card's own id
-        if (card.id) {
-            const match = card.id.match(idPattern);
-            if (match) return match[1];
-        }
+        // Scan card and ALL descendants for ID patterns in common attributes
+        const candidates = [card, ...Array.from(card.querySelectorAll('[id*="project-"], [data-id], [aria-describedby*="project-"], [aria-labelledby*="project-"]'))];
 
-        // Check nested elements with id containing project-
-        const nestedWithId = card.querySelector('[id*="project-"]');
-        if (nestedWithId && nestedWithId.id) {
-            const match = nestedWithId.id.match(idPattern);
-            if (match) return match[1];
-        }
-
-        // Check aria-labelledby
-        const ariaLabel = card.getAttribute('aria-labelledby');
-        if (ariaLabel) {
-            const match = ariaLabel.match(idPattern);
-            if (match) return match[1];
-        }
-
-        // Try to find link in parent container (project-button wrapper)
-        const projectBtn = card.closest('project-button, .project-button-inner-container');
-        if (projectBtn) {
-            const btnLink = projectBtn.querySelector('a[href*="/notebook/"]');
-            if (btnLink && btnLink.href) {
-                const match = btnLink.href.match(/\/notebook\/([^\/\?]+)/);
+        for (const el of candidates) {
+            // Check ID
+            if (el.id) {
+                const match = el.id.match(idPattern);
                 if (match) return match[1];
             }
-            // Also check project-button's nested ids
-            const nestedId = projectBtn.querySelector('[id*="project-"]');
-            if (nestedId && nestedId.id) {
-                const match = nestedId.id.match(idPattern);
+            // Check data-id
+            if (el.dataset && el.dataset.id) {
+                const match = el.dataset.id.match(idPattern);
                 if (match) return match[1];
             }
-        }
-
-        // Check direct link in card/row
-        const directLink = card.querySelector('a[href*="/notebook/"]');
-        if (directLink && directLink.href) {
-            const match = directLink.href.match(/\/notebook\/([^\/\?]+)/);
-            if (match) return match[1];
+            // Check ARIA attributes
+            const ariaAttrs = ['aria-describedby', 'aria-labelledby'];
+            for (const attr of ariaAttrs) {
+                const val = el.getAttribute(attr);
+                if (val) {
+                    const match = val.match(idPattern);
+                    if (match) return match[1];
+                }
+            }
         }
 
         return null;
@@ -1131,6 +1118,53 @@ function isListView() {
     }
 }
 
+/**
+ * Rebuild the idMappings index from legacy mappings if needed (Part 3 Migration)
+ */
+function rebuildIdMappingsIfNeeded() {
+    if (!dashboardState || !dashboardState.mappings) return;
+
+    let changed = false;
+    if (!dashboardState.idMappings) dashboardState.idMappings = {};
+
+    for (const [url, folderId] of Object.entries(dashboardState.mappings)) {
+        const match = url.match(/\/notebook\/([^\/\?]+)/);
+        if (match) {
+            const id = match[1];
+            if (!dashboardState.idMappings[id]) {
+                dashboardState.idMappings[id] = folderId;
+                changed = true;
+                console.debug(`[FoldNest] Rebuilt idMapping for ${id} -> ${folderId}`);
+            }
+        }
+    }
+
+    if (changed) {
+        saveDashboardState();
+    }
+}
+
+/**
+ * Setup listeners for view toggles (Part 5)
+ */
+function setupDashboardViewListeners() {
+    if (window.hasFoldNestDashboardViewListeners) return;
+
+    // Use delegation to catch clicks on view mode toggles
+    document.addEventListener('click', (e) => {
+        const toggle = e.target.closest('button[aria-label*="view"], [aria-label*="View"]');
+        if (toggle) {
+            console.debug('[NotebookLM FoldNest] View toggle detected, scheduling re-run...');
+            // Wait for NotebookLM to re-render the content
+            setTimeout(() => {
+                runDashboardOrganizer();
+            }, 600);
+        }
+    }, true);
+
+    window.hasFoldNestDashboardViewListeners = true;
+}
+
 function getNotebookTitleFromCard(card) {
     try {
         if (!card) return 'Untitled';
@@ -1140,9 +1174,11 @@ function getNotebookTitleFromCard(card) {
             return card.dataset.pluginCachedTitle;
         }
 
+        let title = '';
+
         // Try primary selector
         const titleEl = safeQuery(card, activeSelectors.notebookCardTitle);
-        let title = safeGetText(titleEl);
+        title = safeGetText(titleEl);
 
         // List view fallback: Check for the main link text which is usually the title in a table row
         if (!title && card.tagName === 'TR') {
@@ -1167,17 +1203,21 @@ function getNotebookTitleFromCard(card) {
             title = 'Untitled';
         }
 
+        // NORMALIZE TITLE: Remove newlines, collapse whitespace
+        // This is crucial for matching across different views where HTML structure varies
+        title = title.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+
         // Cache the title on the card element for future use
         if (card.dataset) {
             card.dataset.pluginCachedTitle = title;
         }
-
         return title;
     } catch (e) {
-        console.debug('[NotebookLM FoldNest] getNotebookTitleFromCard error:', e.message);
+        console.debug('[NotebookLM FoldNest] Get notebook title error:', e.message);
         return 'Untitled';
     }
 }
+
 
 // --- CLEANUP FUNCTION ---
 function cleanup() {
@@ -1411,7 +1451,7 @@ function startApp() {
 function saveState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-    
+
     try {
         const stateKey = getStorageKey('notebookTreeState');
         if (!stateKey) return;
@@ -1431,6 +1471,44 @@ function saveState() {
         console.error('[NotebookLM FoldNest] Save state failed:', e);
     }
 }
+
+function saveDashboardState() {
+    // Guard: Skip if extension context invalidated (happens during dev reload)
+    if (!chrome?.runtime?.id) return;
+
+    try {
+        console.debug('[NotebookLM FoldNest] Saving dashboard state...');
+        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
+            if (chrome.runtime.lastError) {
+                console.error('[NotebookLM FoldNest] Failed to save dashboard state:', chrome.runtime.lastError.message);
+            } else {
+                // Trigger cloud sync if enabled (non-blocking)
+                if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
+                    window.FoldNestSync.triggerUpload('dashboard');
+                }
+            }
+        });
+    } catch (e) {
+        console.error('[NotebookLM FoldNest] Failed to save dashboard state:', e);
+    }
+}
+
+/**
+ * Persist the Title-to-ID cache to storage
+ */
+const debouncedPersistTitleCache = debounce(() => {
+    if (!chrome?.runtime?.id || !dashboardState?.notebookTitles) return;
+
+    chrome.storage.local.set({
+        'notebookLM_titleIdCache': dashboardState.notebookTitles
+    }, () => {
+        if (chrome.runtime.lastError) {
+            console.error('[NotebookLM FoldNest] Failed to persist title cache:', chrome.runtime.lastError);
+        } else {
+            console.debug('[NotebookLM FoldNest] Title cache persisted to storage');
+        }
+    });
+}, 2000); // 2 second debounce to avoid storage thrashing
 
 
 // --- [NEW] SOURCE TOGGLE FUNCTIONS ---
@@ -3723,7 +3801,8 @@ function hideFloatingButton(e) {
  */
 function initDashboard() {
     try {
-        chrome.storage.local.get([DASHBOARD_STATE_KEY], (result) => {
+        // Hydrate state and title cache concurrently
+        chrome.storage.local.get([DASHBOARD_STATE_KEY, 'notebookLM_titleIdCache'], (result) => {
             if (result[DASHBOARD_STATE_KEY]) {
                 dashboardState = result[DASHBOARD_STATE_KEY];
             } else {
@@ -3733,8 +3812,21 @@ function initDashboard() {
             // Ensure all required properties exist
             if (!dashboardState.folders) dashboardState.folders = {};
             if (!dashboardState.mappings) dashboardState.mappings = {};
+            if (!dashboardState.idMappings) dashboardState.idMappings = {};
             if (!dashboardState.pinned) dashboardState.pinned = [];
             if (!dashboardState.settings) dashboardState.settings = { foldersOpen: true };
+            if (!dashboardState.notebookTitles) dashboardState.notebookTitles = {};
+
+            // Hydrate title cache from Part 1
+            if (result['notebookLM_titleIdCache']) {
+                dashboardState.notebookTitles = {
+                    ...result['notebookLM_titleIdCache'],
+                    ...dashboardState.notebookTitles // live session data wins
+                };
+            }
+
+            // v0.9.3: Migration for ghost proxies
+            rebuildIdMappingsIfNeeded();
 
             if (dashboardState.folders) {
                 Object.values(dashboardState.folders).forEach(f => f.isOpen = false);
@@ -3763,7 +3855,7 @@ function initDashboard() {
 function saveDashboardState() {
     // Guard: Skip if extension context invalidated (happens during dev reload)
     if (!chrome?.runtime?.id) return;
-    
+
     try {
         chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
             // v0.9.3: Trigger cloud sync if enabled (non-blocking)
@@ -3781,8 +3873,12 @@ function saveDashboardState() {
  */
 function startDashboardObserver() {
     try {
-        // First, find a valid container to observe
+        // Find a valid container to observe
         let targetContainer = safeQuery(document, activeSelectors.dashboardContainer);
+
+        // v0.9.3 optimization: Try to observe just the grid container first
+        const gridContainer = safeQuery(document, activeSelectors.notebookGrid)
+            || document.querySelector('.featured-project')?.parentElement;
 
         // If not found, try common fallbacks
         if (!targetContainer) {
@@ -3802,19 +3898,35 @@ function startDashboardObserver() {
             try {
                 const isRelevant = mutations.some(m => {
                     if (!m.target) return false;
-                    if (m.target.closest && m.target.closest('.plugin-dashboard-container')) return false;
+
+                    // Normalize text nodes to parent for .closest() check
+                    const node = m.target.nodeType === 3 ? m.target.parentElement : m.target;
+                    if (!node || (node.closest && node.closest('.plugin-dashboard-container'))) return false;
+
+                    // Ignore mutations where we are just re-injecting our own buttons
+                    if (m.type === 'childList' && m.addedNodes.length > 0) {
+                        const allOurs = Array.from(m.addedNodes).every(n =>
+                            n.nodeType !== 1 || n.classList?.contains('plugin-add-to-folder-btn')
+                        );
+                        if (allOurs) return false;
+                    }
+
                     return m.type === 'childList';
                 });
+
                 if (!isRelevant) return;
 
                 debouncedRunDashboardOrganizer();
             } catch (e) { }
         });
 
-        dashboardObserver.observe(targetContainer, {
-            childList: true,
-            subtree: true
-        });
+        // Optimization (Part 1): Narrow scope if we have a grid container
+        if (gridContainer) {
+            dashboardObserver.observe(gridContainer, { childList: true, subtree: false });
+        } else {
+            // Fallback to broader scope
+            dashboardObserver.observe(targetContainer, { childList: true, subtree: true });
+        }
 
         console.debug('[NotebookLM FoldNest] Dashboard observer started');
 
@@ -3840,10 +3952,17 @@ function runDashboardOrganizer() {
         const anchor = findDashboardAnchor();
         console.debug('[NotebookLM FoldNest] Anchor found:', anchor ? anchor.tagName + '.' + anchor.className : 'null');
 
+        // v0.9.0 Setup view listeners (Part 5)
+        setupDashboardViewListeners();
+
         // Inject container if we have an anchor
         if (anchor) {
             injectDashboardContainer(anchor);
         }
+
+        // v0.9.3: Build ghost proxies for cross-section sync
+        renderDashboardTreeIfChanged();
+        buildGhostProxiesFromStorage();
 
         // ALWAYS process notebooks (container might already exist from previous run)
         processDashboardNotebooks();
@@ -4004,16 +4123,40 @@ function injectDashboardContainer(anchorEl) {
         }
 
         anchorEl.classList.add('plugin-dashboard-injected');
-        renderDashboardTree();
+        renderDashboardTreeIfChanged();
 
     } catch (e) {
         console.error('[NotebookLM FoldNest] Dashboard container inject error:', e);
     }
 }
 
+let lastFolderStateHash = null;
+
 /**
- * Render the dashboard folder tree
+ * Quick structural hash of folders to avoid unnecessary re-renders
  */
+function getDashboardFolderHash() {
+    if (!dashboardState || !dashboardState.folders) return '';
+
+    // Quick structural hash — just folder IDs, names, hierarchy, order, and open state
+    return Object.values(dashboardState.folders)
+        .sort((a, b) => (a.order || 0) - (b.order || 0))
+        .map(f => `${f.id}:${f.name}:${f.parentId}:${f.order}:${f.isOpen}:${f.color}`)
+        .join('|');
+}
+
+/**
+ * Render tree only if folder structure or state actually changed
+ */
+function renderDashboardTreeIfChanged() {
+    const hash = getDashboardFolderHash();
+    if (hash === lastFolderStateHash) return;
+
+    console.debug('[FoldNest] Folder state changed, re-rendering tree...');
+    lastFolderStateHash = hash;
+    renderDashboardTree();
+}
+
 /**
  * Render the dashboard folder tree
  */
@@ -4152,55 +4295,159 @@ function buildDashboardFolderNode(folder, allFolders) {
  * Process notebooks on the dashboard - create proxies and hide originals if mapped
  * Supports both Grid View (mat-card) and List View (mat-mdc-row) structures
  */
+/**
+ * Process notebooks on the dashboard - create proxies and hide originals if mapped
+ * Supports both Grid View (mat-card) and List View (mat-mdc-row) structures
+ */
 function processDashboardNotebooks() {
     try {
-        // Get notebook elements - works for both Grid and List views
-        let notebookCards = safeQueryAll(document, activeSelectors.notebookCard);
-
-        // Also check for List View rows
-        // Also check for List View rows (skip header row which has no link)
-        const listViewRows = document.querySelectorAll('.mat-mdc-row:not(.plugin-dashboard-processed)');
-        if (listViewRows.length > 0) {
-            // Filter to only notebook rows (have links to /notebook/)
-            const validRows = Array.from(listViewRows).filter(row => {
-                const link = row.querySelector('a[href*="/notebook/"]');
-                return !!link;
-            });
-            // Combine with existing cards
-            notebookCards = [...Array.from(notebookCards), ...validRows];
+        const isList = isListView();
+        console.debug('[FoldNest] Processing dashboard. List view detected:', isList);
+        if (dashboardState && dashboardState.notebookTitles) {
+            console.debug(`[FoldNest] Cached titles: ${Object.keys(dashboardState.notebookTitles).length}`);
         }
 
-        notebookCards.forEach(card => {
-            // Mark as processed to prevent duplicates/loops
-            if (card.classList.contains('plugin-dashboard-processed')) return;
-            card.classList.add('plugin-dashboard-processed');
+        // 1. Get all potential notebook items (Cards + Rows)
+        const notebookItems = [];
+        let stateChanged = false;
 
-            // Skip the "Create new" card
-            if (card.classList.contains('create-new-action-button')) return;
+        // Grid View Cards
+        const cards = safeQueryAll(document, activeSelectors.notebookCard);
+        cards.forEach(card => notebookItems.push({ type: 'card', element: card }));
 
-            const notebookUrl = getNotebookFullUrl(card);
-            if (!notebookUrl) {
-                return;
+        // List View Rows
+        const rows = document.querySelectorAll('.mat-mdc-row');
+        let rowCount = 0;
+        rows.forEach(row => {
+            // Check for explicit link OR if it looks like a notebook row (has title column)
+            const link = row.querySelector('a[href*="/notebook/"]');
+            const titleCol = row.querySelector('.title-column, .mat-column-title');
+
+            if (link || titleCol) {
+                notebookItems.push({ type: 'row', element: row });
+                rowCount++;
+            }
+        });
+        console.debug(`[FoldNest] Found ${rowCount} list rows (total rows checked: ${rows.length}).`);
+
+        // Initialize cache if missing
+        if (!dashboardState.notebookTitles) dashboardState.notebookTitles = {};
+
+        // 2. Process each item
+        notebookItems.forEach(item => {
+            const el = item.element;
+
+            // A. TRY TO GET ID & URL
+            let notebookId = getNotebookIdFromCard(el);
+            let notebookUrl = getNotebookFullUrl(el);
+            let title = getNotebookTitleFromCard(el);
+
+            // B. CACHE HIT (Grid View or explicit link)
+            if (notebookId && title) {
+                // Building the cache as an array of IDs (Part 3)
+                if (!dashboardState.notebookTitles[title]) {
+                    dashboardState.notebookTitles[title] = [];
+                }
+
+                // Allow both string-based (old) and array-based (new) values for backward compatibility
+                // but convert to array immediately if encountered as string
+                if (typeof dashboardState.notebookTitles[title] === 'string') {
+                    dashboardState.notebookTitles[title] = [dashboardState.notebookTitles[title]];
+                }
+
+                if (!dashboardState.notebookTitles[title].includes(notebookId)) {
+                    dashboardState.notebookTitles[title].push(notebookId);
+                    stateChanged = true;
+                    // Persist the title cache across sessions (Part 1)
+                    debouncedPersistTitleCache();
+                }
             }
 
-            const notebookId = getNotebookIdFromCard(card); // Keep for backwards compat if needed elsewhere
+            // C. FALLBACK SEARCH (List View without Links)
+            if (!notebookId && title) {
+                // Try to find ID by Title from our cache (Part 3 Array Resolution)
+                const cachedIds = dashboardState.notebookTitles[title] || [];
+                let resolvedId = null;
 
-            // CRITICAL FIX: Extract and cache title BEFORE any operations
-            // This ensures the title is captured while the card is still visible and accessible
-            const title = getNotebookTitleFromCard(card);
+                if (Array.isArray(cachedIds)) {
+                    if (cachedIds.length === 1) {
+                        resolvedId = cachedIds[0];
+                    } else if (cachedIds.length > 1) {
+                        // Prefer the one that has a folder mapping (disambiguate)
+                        resolvedId = cachedIds.find(id => dashboardState.idMappings[id]) || cachedIds[0];
+                    }
+                } else if (typeof cachedIds === 'string') {
+                    // Legacy single-string cache
+                    resolvedId = cachedIds;
+                }
 
-            // Store title in card's dataset for persistence
-            if (card.dataset) {
-                card.dataset.pluginNotebookTitle = title;
+                // FUZZY MATCH FALLBACK (Last Resort)
+                if (!resolvedId) {
+                    // Normalize: lowercase, strip non-alphanumeric
+                    const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const normalizedCurrent = normalize(title);
+
+                    if (normalizedCurrent.length > 3) {
+                        const cachedTitles = Object.keys(dashboardState.notebookTitles);
+                        for (const cTitle of cachedTitles) {
+                            const ids = dashboardState.notebookTitles[cTitle];
+                            const normalizedCached = normalize(cTitle);
+                            const targetId = Array.isArray(ids) ? ids[0] : ids;
+
+                            if (normalizedCached === normalizedCurrent) {
+                                resolvedId = targetId;
+                                console.debug(`[FoldNest] Fuzzy matched "${title}" to "${cTitle}" (exact normalized)`);
+                                break;
+                            }
+                            if (normalizedCached.length > 5 && normalizedCurrent.includes(normalizedCached)) {
+                                resolvedId = targetId;
+                                console.debug(`[FoldNest] Fuzzy matched "${title}" to "${cTitle}" (current includes cached)`);
+                                break;
+                            }
+                            if (normalizedCurrent.length > 5 && normalizedCached.includes(normalizedCurrent)) {
+                                resolvedId = targetId;
+                                console.debug(`[FoldNest] Fuzzy matched "${title}" to "${cTitle}" (cached includes current)`);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (resolvedId) {
+                    notebookId = resolvedId;
+                    console.debug(`[FoldNest] MATCHED row "${title}" -> ${notebookId}`);
+                } else {
+                    if (item.type === 'row') console.debug(`[FoldNest] NO MATCH for row "${title}" in cache.`);
+                }
             }
 
-            const folderId = dashboardState.mappings[notebookUrl];
+            // If we have an ID but still no URL, attempt to find a URL from mappings (Part 2)
+            if (notebookId && !notebookUrl) {
+                for (const [url, mappedFolderId] of Object.entries(dashboardState.mappings)) {
+                    if (url.includes(notebookId)) {
+                        notebookUrl = url;
+                        break;
+                    }
+                }
+            }
 
-            // Add the "add to folder" button to the card (id-based is fine for the button itself if needed)
-            addFolderButtonToCard(card, notebookId, title);
+            if (!notebookId) return;
 
-            // PROXY CLEANUP: Remove any existing proxies for this notebook first
-            // This prevents duplicates if moved between folders or removed
+            // Ensure extracted data is attached to element
+            if (el.dataset) {
+                el.dataset.pluginNotebookTitle = title;
+                el.dataset.notebookId = notebookId;
+            }
+
+            // D. LOOKUP MAPPING (Part 2: Double lookup)
+            const folderId = dashboardState.mappings[notebookUrl]
+                || (notebookId && dashboardState.idMappings[notebookId]);
+
+            // Add/Update "Add to folder" button
+            addFolderButtonToCard(el, notebookId, title, item.type === 'row');
+
+            // Handle Proxies & Hiding
+            // Remove old proxies if they don't match current folder
             const existingProxies = document.querySelectorAll(`.plugin-proxy-item[data-notebook-id="${notebookId}"]`);
             existingProxies.forEach(p => {
                 const pFolderId = p.parentElement?.dataset?.folderId;
@@ -4209,53 +4456,81 @@ function processDashboardNotebooks() {
                 }
             });
 
-            // Handle visibility based on folder mapping
             if (folderId && dashboardState.folders[folderId]) {
-                // BUG FIX: Hide the parent wrapper/tile to prevent blank spaces in grid
-                const gridItem = card.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || card.parentElement || card;
+                // MAPPED -> HIDE ORIGINAL, SHOW PROXY
+                // 1. Hide the original item
+                const gridItem = item.type === 'card' ? (el.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || el.parentElement || el) : el;
 
-                gridItem.style.display = 'none';
-                gridItem.style.visibility = 'hidden';
-                gridItem.classList.add('plugin-hidden-grid-item');
-
-                // Backup for robust unhiding
-                if (gridItem !== card) {
-                    // Mark the card itself too just in case
-                    card.dataset.pluginHidden = 'true';
+                gridItem.classList.add('plugin-hidden-native');
+                if (item.type === 'card') {
+                    gridItem.style.setProperty('display', 'none', 'important');
+                    gridItem.classList.add('plugin-hidden-grid-item');
+                } else {
+                    gridItem.style.display = 'none';
                 }
 
-                addNotebookToFolderView(notebookId, title, folderId, card);
+                el.dataset.pluginHidden = 'true';
+
+                // 2. Add/Upgrade Proxy in Folder (Ghost Upgrade Logic)
+                const itemsMount = document.querySelector(`.plugin-dashboard-folder-items[data-folder-id="${folderId}"]`);
+                if (itemsMount) {
+                    const ghostProxy = itemsMount.querySelector(`.plugin-proxy-item[data-notebook-id="${notebookId}"][data-is-ghost="true"]`);
+                    if (ghostProxy) {
+                        // Upgrade: wire eject to real card, remove ghost marker
+                        ghostProxy.dataset.isGhost = 'false';
+                        const ejectBtn = ghostProxy.querySelector('.action-icon.eject');
+                        if (ejectBtn) {
+                            ejectBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                delete dashboardState.mappings[notebookUrl];
+                                delete dashboardState.idMappings[notebookId];
+                                saveDashboardState();
+                                if (gridItem) {
+                                    gridItem.style.display = '';
+                                    gridItem.classList.remove('plugin-hidden-native');
+                                    gridItem.classList.remove('plugin-hidden-grid-item');
+                                    el.classList.remove('plugin-dashboard-processed');
+                                    delete el.dataset.pluginHidden;
+                                }
+                                ghostProxy.remove();
+                                runDashboardOrganizer();
+                            };
+                        }
+                        console.debug(`[FoldNest] Upgraded ghost proxy for "${title}" (${notebookId})`);
+                    } else {
+                        // No ghost exists or already upgraded — create/ensure real proxy normally
+                        addNotebookToFolderView(notebookId, title, folderId, el);
+                    }
+                }
+
             } else {
-                // Ensure visible if NOT mapped
-                const gridItem = card.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || card.parentElement || card;
+                // NOT MAPPED -> ENSURE VISIBLE
+                const gridItem = item.type === 'card' ? (el.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || el.parentElement || el) : el;
 
-                if (gridItem.style.display === 'none' || gridItem.classList.contains('plugin-hidden-grid-item')) {
-                    gridItem.style.display = '';
-                    gridItem.style.visibility = '';
-                    gridItem.classList.remove('plugin-hidden-grid-item');
-                }
+                gridItem.classList.remove('plugin-hidden-native');
+                gridItem.classList.remove('plugin-hidden-grid-item');
+                if (gridItem.style.display === 'none') gridItem.style.display = '';
+                if (gridItem.style.visibility === 'hidden') gridItem.style.visibility = '';
+
+                delete el.dataset.pluginHidden;
             }
 
-            card.classList.add('plugin-dashboard-processed');
+            el.classList.add('plugin-dashboard-processed');
         });
+
+        if (stateChanged) {
+            saveDashboardState();
+        }
 
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Process dashboard notebooks error:', e.message);
     }
 }
-
-/**
- * Add a "move to folder" button to a notebook card
- */
-/**
- * Add a "move to folder" button to a notebook card
- */
-function addFolderButtonToCard(card, notebookId, title) {
+function addFolderButtonToCard(element, notebookId, title, isRow) {
     try {
-        if (card.querySelector('.plugin-add-to-folder-btn')) return;
+        if (element.querySelector('.plugin-add-to-folder-btn')) return;
 
-        const isList = isListView();
-        const notebookUrl = getNotebookFullUrl(card);
+        const notebookUrl = getNotebookFullUrl(element);
         if (!notebookUrl) return;
 
         let lastClickTime = 0;
@@ -4266,19 +4541,19 @@ function addFolderButtonToCard(card, notebookId, title) {
                 e.preventDefault();
                 e.stopPropagation();
 
+
                 const now = Date.now();
                 if (now - lastClickTime < 300) return;
                 lastClickTime = now;
 
-                showDashboardMoveMenu(e, notebookUrl, title, card);
+                showDashboardMoveMenu(e, notebookUrl, title, element);
             }
         }, [getIconElement('addToFolder')]);
 
-        // Style based on view
-        if (isList) {
-            // List view: Insert into the actions column of the table row
-            // NotebookLM uses td.mat-column-actions or .actions-column
-            const actionsCell = card.querySelector('td.mat-column-actions, .actions-column, td:last-child, .cdk-column-actions');
+        // Style based on view type
+        if (isRow) {
+            // List view: Insert into the actions column
+            const actionsCell = element.querySelector('td.mat-column-actions, .actions-column, td:last-child, .cdk-column-actions');
 
             Object.assign(btn.style, {
                 background: 'transparent',
@@ -4298,22 +4573,24 @@ function addFolderButtonToCard(card, notebookId, title) {
             });
 
             if (actionsCell) {
-                // Insert at beginning of actions cell
                 actionsCell.insertBefore(btn, actionsCell.firstChild);
-                actionsCell.style.display = 'flex';
-                actionsCell.style.alignItems = 'center';
-                actionsCell.style.gap = '4px';
+                // Ensure flex layout for the cell so buttons align
+                if (getComputedStyle(actionsCell).display !== 'flex') {
+                    actionsCell.style.display = 'flex';
+                    actionsCell.style.alignItems = 'center';
+                    actionsCell.style.justifyContent = 'flex-end'; // usually actions are on right
+                }
             } else {
-                // Fallback: append to the row itself
-                card.style.position = 'relative';
+                // Fallback: absolute position
+                element.style.position = 'relative';
                 btn.style.position = 'absolute';
                 btn.style.right = '48px';
                 btn.style.top = '50%';
                 btn.style.transform = 'translateY(-50%)';
-                card.appendChild(btn);
+                element.appendChild(btn);
             }
         } else {
-            // Grid view: Absolute positioning in corner
+            // Grid view
             Object.assign(btn.style, {
                 position: 'absolute',
                 top: '12px',
@@ -4334,22 +4611,22 @@ function addFolderButtonToCard(card, notebookId, title) {
                 color: 'var(--plugin-icon-color)'
             });
 
-            if (getComputedStyle(card).position === 'static') {
-                card.style.position = 'relative';
+            if (getComputedStyle(element).position === 'static') {
+                element.style.position = 'relative';
             }
-            card.appendChild(btn);
+            element.appendChild(btn);
         }
 
-        // Hover handling for both views
-        card.addEventListener('mouseenter', () => btn.style.opacity = '1');
-        card.addEventListener('mouseleave', () => btn.style.opacity = '0');
+        // Hover handling
+        element.addEventListener('mouseenter', () => btn.style.opacity = '1');
+        element.addEventListener('mouseleave', () => btn.style.opacity = '0');
 
         btn.onmouseenter = () => {
-            if (!isList) btn.style.transform = 'scale(1.1)';
+            if (!isRow) btn.style.transform = 'scale(1.1)';
             else btn.style.backgroundColor = 'var(--plugin-bg-hover)';
         };
         btn.onmouseleave = () => {
-            if (!isList) btn.style.transform = 'scale(1)';
+            if (!isRow) btn.style.transform = 'scale(1)';
             else btn.style.backgroundColor = 'transparent';
         };
 
@@ -4361,6 +4638,72 @@ function addFolderButtonToCard(card, notebookId, title) {
 /**
  * Add a notebook proxy inside a folder view
  */
+/**
+ * Build ghost proxies for mapped notebooks that aren't currently in the DOM
+ */
+function buildGhostProxiesFromStorage() {
+    try {
+        const idMappings = dashboardState.idMappings || {};
+        const allMappedIds = Object.keys(idMappings);
+
+        if (allMappedIds.length === 0) return;
+
+        console.debug(`[FoldNest] Building ghosts for ${allMappedIds.length} mapped notebooks...`);
+
+        // Reverse-lookup: build { notebookId → title } from notebookTitles cache
+        const idToTitle = {};
+        const notebookTitles = dashboardState.notebookTitles || {};
+        for (const [title, ids] of Object.entries(notebookTitles)) {
+            const idArray = Array.isArray(ids) ? ids : [ids];
+            idArray.forEach(id => {
+                if (!idToTitle[id]) idToTitle[id] = title;
+            });
+        }
+
+        allMappedIds.forEach(notebookId => {
+            const folderId = idMappings[notebookId];
+            if (!dashboardState.folders[folderId]) return;
+
+            const title = idToTitle[notebookId] || 'Untitled';
+            const notebookUrl = window.location.origin + '/notebook/' + notebookId;
+
+            // Check if a proxy already exists (ghost or real)
+            const itemsMount = document.querySelector(`.plugin-dashboard-folder-items[data-folder-id="${folderId}"]`);
+            if (!itemsMount) return;
+            if (itemsMount.querySelector(`.plugin-proxy-item[data-notebook-id="${notebookId}"]`)) return;
+
+            // Create the ghost proxy
+            const proxy = createEl('div', {
+                className: 'plugin-proxy-item plugin-dashboard-notebook',
+                'data-notebook-id': notebookId,
+                'data-title': title,
+                onclick: () => { window.location.href = notebookUrl; }
+            }, [
+                createEl('span', { className: 'proxy-icon' }, [getIconElement('notebook')]),
+                createEl('span', { className: 'proxy-title' }, [title]),
+                createEl('span', {
+                    className: 'action-icon eject',
+                    title: 'Remove from folder',
+                    onclick: (e) => {
+                        e.stopPropagation();
+                        delete dashboardState.mappings[notebookUrl];
+                        delete dashboardState.idMappings[notebookId];
+                        saveDashboardState();
+                        proxy.remove();
+                        runDashboardOrganizer();
+                    }
+                }, [getIconElement('eject')])
+            ]);
+
+            proxy.dataset.isGhost = 'true';
+            itemsMount.appendChild(proxy);
+            console.debug(`[FoldNest] Created ghost proxy: "${title}" (${notebookId})`);
+        });
+    } catch (e) {
+        console.error('[NotebookLM FoldNest] buildGhostProxiesFromStorage error:', e);
+    }
+}
+
 /**
  * Add a notebook proxy inside a folder view
  */
@@ -4551,10 +4894,15 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
         }
 
         // Update state
+        const notebookId = getNotebookIdFromCard(cardEl) ||
+            (notebookUrl.match(/notebook\/([^\/\?]+)/)?.[1]);
+
         if (folderId) {
             dashboardState.mappings[notebookUrl] = folderId;
+            if (notebookId) dashboardState.idMappings[notebookId] = folderId;
         } else {
             delete dashboardState.mappings[notebookUrl];
+            if (notebookId) delete dashboardState.idMappings[notebookId];
         }
 
         // Save to storage
