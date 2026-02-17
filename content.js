@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // DIAGNOSTIC: Verify content script injection
 // ============================================================================
 console.log('[FoldNest] Content script loaded at:', new Date().toISOString());
@@ -1421,6 +1421,12 @@ function startUrlWatcher() {
             } else if (newNotebookId && !currentNotebookId) {
                 currentNotebookId = newNotebookId;
                 init();
+            } else if (!newNotebookId && currentNotebookId) {
+                // Handle transition from Notebook -> Dashboard
+                console.debug('[NotebookLM FoldNest] Transitioned to Dashboard');
+                currentNotebookId = null;
+                cleanup(); // Ensure we clean up notebook observers
+                init(); // Re-run init to detect dashboard and inject UI
             }
         } catch (e) {
             console.debug('[NotebookLM FoldNest] URL watcher error:', e.message);
@@ -2347,10 +2353,10 @@ function exportFolders() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Config exported");
+        showToast("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ Config exported");
     } catch (e) {
         console.error('[NotebookLM FoldNest] Export failed:', e);
-        showToast("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Export failed");
+        showToast("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Export failed");
     }
 }
 
@@ -3407,7 +3413,7 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
             }
         } else {
             iconElement = document.createElement('span');
-            iconElement.innerText = 'ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾';
+            iconElement.innerText = 'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾';
             iconElement.style.marginRight = '8px';
         }
     } else {
@@ -3954,6 +3960,7 @@ function runDashboardOrganizer() {
 
         // v0.9.0 Setup view listeners (Part 5)
         setupDashboardViewListeners();
+        setupDashboardMoreMenuInterceptor();
 
         // Inject container if we have an anchor
         if (anchor) {
@@ -4138,7 +4145,7 @@ let lastFolderStateHash = null;
 function getDashboardFolderHash() {
     if (!dashboardState || !dashboardState.folders) return '';
 
-    // Quick structural hash — just folder IDs, names, hierarchy, order, and open state
+    // Quick structural hash â€” just folder IDs, names, hierarchy, order, and open state
     return Object.values(dashboardState.folders)
         .sort((a, b) => (a.order || 0) - (b.order || 0))
         .map(f => `${f.id}:${f.name}:${f.parentId}:${f.order}:${f.isOpen}:${f.color}`)
@@ -4498,7 +4505,7 @@ function processDashboardNotebooks() {
                         }
                         console.debug(`[FoldNest] Upgraded ghost proxy for "${title}" (${notebookId})`);
                     } else {
-                        // No ghost exists or already upgraded — create/ensure real proxy normally
+                        // No ghost exists or already upgraded â€” create/ensure real proxy normally
                         addNotebookToFolderView(notebookId, title, folderId, el);
                     }
                 }
@@ -4552,39 +4559,31 @@ function addFolderButtonToCard(element, notebookId, title, isRow) {
 
         // Style based on view type
         if (isRow) {
-            // List view: Insert into the actions column
-            const actionsCell = element.querySelector('td.mat-column-actions, .actions-column, td:last-child, .cdk-column-actions');
+            // Target the 'Sources' column or 'Created' column for middle-of-the-row placement
+            const targetCell = element.querySelector(
+                'td.mat-column-sources, .sources-column, ' +
+                'td.mat-column-created, .created-column, ' +
+                'td:nth-child(2), td:nth-child(3)'
+            );
 
-            Object.assign(btn.style, {
-                background: 'transparent',
-                border: 'none',
-                width: '28px',
-                height: '28px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                opacity: '0',
-                transition: 'opacity 0.2s, background 0.2s',
-                color: 'var(--plugin-icon-color)',
-                borderRadius: '4px',
-                marginRight: '8px',
-                padding: '4px'
-            });
+            if (targetCell) {
+                targetCell.style.position = 'relative'; // Ensure button is relative to this cell
+                btn.className += ' plugin-list-view-btn';
+                targetCell.appendChild(btn);
 
-            if (actionsCell) {
-                actionsCell.insertBefore(btn, actionsCell.firstChild);
-                // Ensure flex layout for the cell so buttons align
-                if (getComputedStyle(actionsCell).display !== 'flex') {
-                    actionsCell.style.display = 'flex';
-                    actionsCell.style.alignItems = 'center';
-                    actionsCell.style.justifyContent = 'flex-end'; // usually actions are on right
-                }
+                // Fine-tune positioning to "float" nicely
+                Object.assign(btn.style, {
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    zIndex: '10'
+                });
             } else {
-                // Fallback: absolute position
+                // Absolute fallback as last resort (original logic refined)
                 element.style.position = 'relative';
                 btn.style.position = 'absolute';
-                btn.style.right = '48px';
+                btn.style.right = '120px'; // Far left of the 3-dots
                 btn.style.top = '50%';
                 btn.style.transform = 'translateY(-50%)';
                 element.appendChild(btn);
@@ -4650,7 +4649,7 @@ function buildGhostProxiesFromStorage() {
 
         console.debug(`[FoldNest] Building ghosts for ${allMappedIds.length} mapped notebooks...`);
 
-        // Reverse-lookup: build { notebookId → title } from notebookTitles cache
+        // Reverse-lookup: build { notebookId â†’ title } from notebookTitles cache
         const idToTitle = {};
         const notebookTitles = dashboardState.notebookTitles || {};
         for (const [title, ids] of Object.entries(notebookTitles)) {
@@ -4696,7 +4695,19 @@ function buildGhostProxiesFromStorage() {
             ]);
 
             proxy.dataset.isGhost = 'true';
-            itemsMount.appendChild(proxy);
+
+            // Alphabetical insertion
+            const siblings = Array.from(itemsMount.querySelectorAll('.plugin-proxy-item'));
+            const insertBefore = siblings.find(s => {
+                const sTitle = (s.dataset.title || s.querySelector('.proxy-title')?.textContent || '').toLowerCase();
+                return title.toLowerCase() < sTitle;
+            });
+
+            if (insertBefore) {
+                itemsMount.insertBefore(proxy, insertBefore);
+            } else {
+                itemsMount.appendChild(proxy);
+            }
             console.debug(`[FoldNest] Created ghost proxy: "${title}" (${notebookId})`);
         });
     } catch (e) {
@@ -4751,7 +4762,18 @@ function addNotebookToFolderView(notebookId, title, folderId, originalCard) {
             }, [getIconElement('eject')])
         ]);
 
-        itemsMount.appendChild(proxy);
+        // Alphabetical insertion
+        const siblings = Array.from(itemsMount.querySelectorAll('.plugin-proxy-item'));
+        const insertBefore = siblings.find(s => {
+            const sTitle = (s.dataset.title || s.querySelector('.proxy-title')?.textContent || '').toLowerCase();
+            return title.toLowerCase() < sTitle;
+        });
+
+        if (insertBefore) {
+            itemsMount.insertBefore(proxy, insertBefore);
+        } else {
+            itemsMount.appendChild(proxy);
+        }
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Add notebook to folder view error:', e.message);
     }
@@ -4836,11 +4858,23 @@ function showDashboardMoveMenu(e, notebookUrl, title, cardEl) {
         Object.assign(menu.style, {
             position: 'fixed',
             top: `${rect.top}px`,
-            left: `${rect.right + 8}px`
+            left: `${rect.right + 8}px`,
+            zIndex: '99999'
         });
 
         // Ensure menu stays within viewport
         document.body.appendChild(menu);
+
+        // FIX: Aggressively remove native backdrops that might block clicks
+        const backdrops = document.querySelectorAll('.cdk-overlay-backdrop');
+        backdrops.forEach(b => {
+            b.style.pointerEvents = 'none';
+            b.style.opacity = '0';
+        });
+
+        // Ensure menu itself is clickable
+        menu.style.pointerEvents = 'auto';
+
         const menuRect = menu.getBoundingClientRect();
         if (menuRect.right > window.innerWidth) {
             menu.style.left = `${rect.left - menuRect.width - 8}px`;
@@ -4920,7 +4954,7 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             setTimeout(() => {
                 // Determine destination name for toast
                 const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
-                showToast(`Moved to ${folderName} ✓`);
+                showToast(`Moved to ${folderName} \u2713`);
 
                 // FIX: Force re-processing of the original card to generate proxy
                 if (cardEl) {
@@ -5328,7 +5362,7 @@ window.NotebookLMFoldNest = {
                     try {
                         renderDashboardTree();
                         processDashboardNotebooks();
-                        showToast('Dashboard synced from cloud ✓', 'success');
+                        showToast('Dashboard synced from cloud \u2713', 'success');
                         console.log('[NotebookLM FoldNest] Dashboard state applied successfully');
                     } catch (renderErr) {
                         console.error('[NotebookLM FoldNest] Dashboard render failed after applyState:', renderErr);
@@ -5356,7 +5390,7 @@ window.NotebookLMFoldNest = {
                         safeProcessItems('source');
                         safeProcessItems('studio');
 
-                        showToast('Synced from cloud ✓', 'success');
+                        showToast('Synced from cloud \u2713', 'success');
                         console.log('[NotebookLM FoldNest] Notebook state applied successfully');
                     } catch (renderErr) {
                         console.error('[NotebookLM FoldNest] Notebook render failed after applyState:', renderErr);
@@ -5371,5 +5405,240 @@ window.NotebookLMFoldNest = {
         }
     }
 };
+
+
+let _dashLastMoreRow = null;
+let _dashMenuObserver = null;
+
+function setupDashboardMoreMenuInterceptor() {
+    if (document._pluginMoreInterceptorAttached) return;
+    document._pluginMoreInterceptorAttached = true;
+
+    // 1. Track the last row where the user initiated a menu action
+    document.addEventListener('mousedown', (e) => {
+        const moreBtn = e.target.closest(
+            'button[aria-label="More"], .project-button-more-icon, [matmenutrigger], [matmenutabletrigger]'
+        );
+        if (moreBtn) {
+            const row = moreBtn.closest('.mat-mdc-row, tr[class*="mdc-row"], .projects-dashboard-item');
+            if (row) _dashLastMoreRow = row;
+        }
+    }, true);
+
+    // 2. Persistent observer to catch any menu panels being added to the DOM
+    const menuObserver = new MutationObserver((mutations) => {
+        if (!_dashLastMoreRow) return;
+
+        for (const mutation of mutations) {
+            mutation.addedNodes.forEach(node => {
+                if (node.nodeType !== 1) return;
+
+                const panel = node.querySelector('.mat-mdc-menu-panel, .mat-menu-panel, .mdc-menu-surface') ||
+                    (node.matches('.mat-mdc-menu-panel, .mat-menu-panel, .mdc-menu-surface') ? node : null);
+
+                if (panel && !panel._pluginInjected) {
+                    panel._pluginInjected = true;
+                    setTimeout(() => {
+                        const content = panel.querySelector('.mat-mdc-menu-content, .mat-menu-content, .mdc-list') || panel;
+                        injectDashboardMenuItems(content, _dashLastMoreRow);
+                    }, 60);
+                }
+            });
+        }
+    });
+
+    menuObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+
+function injectDashboardMenuItems(panel, row) {
+    if (panel.querySelector('.plugin-injected-menu-item')) return;
+
+    // Separator
+    const sep = document.createElement('div');
+    sep.className = 'plugin-injected-menu-item plugin-menu-separator';
+    panel.appendChild(sep);
+
+    // "Add to folder" button
+
+    const folderItem = document.createElement('button');
+    folderItem.className = 'plugin-injected-menu-item plugin-menu-item-btn mat-mdc-menu-item';
+    folderItem.innerHTML = `
+            <span class="plugin-menu-item-icon">${renderIconToString('addToFolder')}</span>
+            <span class="mdc-list-item__primary-text">Add to folder</span>`;
+    folderItem.onclick = (e) => {
+        e.stopPropagation();
+        const rect = folderItem.getBoundingClientRect();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        const notebookUrl = getNotebookFullUrl(row);
+        const title = getNotebookTitleFromCard(row);
+        // Increased delay to 200ms to allow native menu to fully close/fade out
+        setTimeout(() => showDashboardMoveMenu({ currentTarget: { getBoundingClientRect: () => rect } }, notebookUrl, title, row), 200);
+    };
+    panel.appendChild(folderItem);
+
+    // "Select" button
+    const selectItem = document.createElement('button');
+    selectItem.className = 'plugin-injected-menu-item plugin-menu-item-btn mat-mdc-menu-item';
+    selectItem.innerHTML = `
+            <span class="plugin-menu-item-icon">${renderIconToString('selectAll')}</span>
+            <span class="mdc-list-item__primary-text">Select</span>`;
+    selectItem.onclick = (e) => {
+        e.stopPropagation();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        // Increased delay to 200ms for consistency
+        setTimeout(() => enterDashboardBulkSelect(row), 200);
+    };
+    panel.appendChild(selectItem);
+}
+
+let _dashBulkSelectActive = false;
+
+function enterDashboardBulkSelect(triggerRow) {
+    if (_dashBulkSelectActive) return;
+    _dashBulkSelectActive = true;
+    document.body.classList.add('plugin-bulk-select-active');
+
+    const rows = Array.from(document.querySelectorAll('.mat-mdc-row')).filter(r =>
+        r.querySelector('a[href*="/notebook/"], .title-column, .mat-column-title')
+    );
+
+    rows.forEach(row => {
+        if (row.querySelector('.plugin-bulk-checkbox-wrap')) return;
+        const wrap = document.createElement('label');
+        wrap.className = 'plugin-bulk-checkbox-wrap';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'plugin-bulk-checkbox';
+        cb.onclick = (e) => e.stopPropagation();
+        if (row === triggerRow) cb.checked = true;
+        wrap.appendChild(cb);
+
+        const firstCell = row.querySelector('td');
+        if (firstCell) firstCell.insertBefore(wrap, firstCell.firstChild);
+    });
+
+    showBulkActionBar(rows);
+}
+
+function showBulkActionBar(rows) {
+    if (document.getElementById('plugin-bulk-action-bar')) return;
+    const bar = document.createElement('div');
+    bar.id = 'plugin-bulk-action-bar';
+    bar.innerHTML = `
+        <span id="plugin-bulk-count"></span>
+        <button class="plugin-bulk-btn plugin-bulk-move">Move to folder</button>
+        <button class="plugin-bulk-btn plugin-bulk-cancel">Cancel</button>`;
+    document.body.appendChild(bar);
+
+    const countEl = bar.querySelector('#plugin-bulk-count');
+    const updateCount = () => {
+        const n = document.querySelectorAll('.plugin-bulk-checkbox:checked').length;
+        countEl.textContent = `${n} notebook${n !== 1 ? 's' : ''} selected`;
+    };
+    updateCount();
+
+    const changeHandler = (e) => {
+        if (e.target.classList.contains('plugin-bulk-checkbox')) updateCount();
+    };
+    document.addEventListener('change', changeHandler);
+    bar._changeHandler = changeHandler;
+
+    bar.querySelector('.plugin-bulk-move').onclick = (e) => {
+        const selectedRows = rows.filter(r => r.querySelector('.plugin-bulk-checkbox:checked'));
+        if (selectedRows.length === 0) {
+            showToast("No notebooks selected");
+            return;
+        }
+        showBulkFolderPicker(e, selectedRows);
+    };
+
+    bar.querySelector('.plugin-bulk-cancel').onclick = exitDashboardBulkSelect;
+
+    requestAnimationFrame(() => bar.classList.add('visible'));
+}
+
+function showBulkFolderPicker(e, selectedRows) {
+    const existing = document.querySelector('.plugin-dropdown-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.className = 'plugin-dropdown-menu';
+
+    const folders = Object.values(dashboardState.folders || {})
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    folders.forEach(folder => {
+        const item = document.createElement('div');
+        item.className = 'plugin-dropdown-item';
+        item.innerHTML = `
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: ${folder.color || 'var(--plugin-accent)'}; display: inline-block;"></span>
+            <span>${folder.name}</span>`;
+        item.onclick = (ev) => {
+            ev.stopPropagation();
+            bulkMoveSelectedToFolder(selectedRows, folder.id, folder.name);
+            menu.remove();
+        };
+        menu.appendChild(item);
+    });
+
+    if (folders.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'plugin-dropdown-item disabled';
+        empty.textContent = "No folders created";
+        menu.appendChild(empty);
+    }
+
+    const barRect = document.getElementById('plugin-bulk-action-bar').getBoundingClientRect();
+    Object.assign(menu.style, {
+        position: 'fixed',
+        bottom: `${window.innerHeight - barRect.top + 8}px`,
+        left: `${barRect.left + 120}px`,
+        zIndex: '10001'
+    });
+
+    document.body.appendChild(menu);
+
+    const closeHandler = (ev) => {
+        if (!menu.contains(ev.target)) {
+            menu.remove();
+            document.removeEventListener('click', closeHandler);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 10);
+}
+
+function bulkMoveSelectedToFolder(selectedRows, folderId, folderName) {
+    let moved = 0;
+    selectedRows.forEach(row => {
+        const notebookUrl = getNotebookFullUrl(row);
+        const notebookId = getNotebookIdFromCard(row) || (notebookUrl?.split('/').pop());
+
+        if (notebookUrl) {
+            dashboardState.mappings[notebookUrl] = folderId;
+            if (notebookId) dashboardState.idMappings[notebookId] = folderId;
+            row.classList.remove('plugin-dashboard-processed');
+            moved++;
+        }
+    });
+
+    saveDashboardState();
+    showToast(`Moved ${moved} notebooks to "${folderName}" \u2713`);
+    setTimeout(() => runDashboardOrganizer(), 50);
+    exitDashboardBulkSelect();
+}
+
+function exitDashboardBulkSelect() {
+    _dashBulkSelectActive = false;
+    document.body.classList.remove('plugin-bulk-select-active');
+    document.querySelectorAll('.plugin-bulk-checkbox-wrap').forEach(el => el.remove());
+
+    const bar = document.getElementById('plugin-bulk-action-bar');
+    if (bar) {
+        if (bar._changeHandler) document.removeEventListener('change', bar._changeHandler);
+        bar.classList.remove('visible');
+        setTimeout(() => bar.remove(), 250);
+    }
+}
 
 init();
