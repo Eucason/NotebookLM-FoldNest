@@ -1468,15 +1468,19 @@ function saveState() {
         appState._syncMeta.lastModified = Date.now();
         // appState._syncMeta.version = getExtensionVersion(); 
 
-        chrome.storage.local.set({ [stateKey]: appState }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
-            } else {
-                // v0.9.3: Trigger cloud sync if enabled (non-blocking)
-                if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
-                    window.FoldNestSync.triggerUpload('notebook');
+        return new Promise((resolve) => {
+            chrome.storage.local.set({ [stateKey]: appState }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
+                    reject(chrome.runtime.lastError);
+                } else {
+                    // v0.9.3: Trigger cloud sync if enabled (non-blocking)
+                    if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
+                        window.FoldNestSync.triggerUpload('notebook');
+                    }
+                    resolve();
                 }
-            }
+            });
         });
     } catch (e) {
         console.error('[NotebookLM FoldNest] Save state failed:', e);
@@ -1495,15 +1499,19 @@ function saveDashboardState() {
         dashboardState._syncMeta.lastModified = Date.now();
         // dashboardState._syncMeta.version = getExtensionVersion();
 
-        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('[NotebookLM FoldNest] Failed to save dashboard state:', chrome.runtime.lastError.message);
-            } else {
-                // Trigger cloud sync if enabled (non-blocking)
-                if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
-                    window.FoldNestSync.triggerUpload('dashboard');
+        return new Promise((resolve) => {
+            chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('[NotebookLM FoldNest] Failed to save dashboard state:', chrome.runtime.lastError.message);
+                    reject(chrome.runtime.lastError);
+                } else {
+                    // Trigger cloud sync if enabled (non-blocking)
+                    if (window.FoldNestSync && window.FoldNestSync.isEnabled()) {
+                        window.FoldNestSync.triggerUpload('dashboard');
+                    }
+                    resolve();
                 }
-            }
+            });
         });
     } catch (e) {
         console.error('[NotebookLM FoldNest] Failed to save dashboard state:', e);
@@ -2384,11 +2392,11 @@ function importFolders() {
                 try {
                     const data = JSON.parse(event.target.result);
                     if (!data.source || !data.studio) throw new Error("Invalid backup");
-                    showConfirmModal("Replace existing configuration?", () => {
+                    showConfirmModal("Replace existing configuration?", async () => {
                         appState.source = data.source;
                         appState.studio = data.studio;
                         if (data.settings) appState.settings = data.settings;
-                        saveState();
+                        await saveState();
                         location.reload();
                     });
                 } catch (err) {
@@ -2986,9 +2994,9 @@ function injectContainer(anchorEl, context) {
         const resetBtn = controls.querySelector('.reset-btn');
         if (resetBtn) {
             resetBtn.onclick = () => {
-                showConfirmModal("Reset all folders?", () => {
+                showConfirmModal("Reset all folders?", async () => {
                     appState[context] = { folders: {}, mappings: {}, pinned: [], tasks: [] };
-                    saveState();
+                    await saveState();
                     location.reload();
                 });
             };
@@ -4097,9 +4105,14 @@ function injectDashboardContainer(anchorEl) {
         controls.querySelector('.export-btn').onclick = () => exportDashboardFolders();
         controls.querySelector('.import-btn').onclick = () => importDashboardFolders();
         controls.querySelector('.reset-btn').onclick = () => {
-            showConfirmModal("Reset all dashboard folders?", () => {
+            showConfirmModal("Reset all dashboard folders?", async () => {
                 dashboardState = JSON.parse(JSON.stringify(DEFAULT_DASHBOARD_STATE));
-                saveDashboardState();
+
+                // Ensure sync metadata is updated to flag this as a new change
+                if (!dashboardState._syncMeta) dashboardState._syncMeta = {};
+                dashboardState._syncMeta.lastModified = Date.now();
+
+                await saveDashboardState();
                 location.reload();
             });
         };
@@ -4950,41 +4963,40 @@ function moveNotebookToFolder(notebookUrl, folderId, cardEl) {
             if (notebookId) delete dashboardState.idMappings[notebookId];
         }
 
-        // Save to storage
-        chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
-            if (chrome.runtime.lastError) {
-                console.error('[NotebookLM FoldNest] Storage error:', chrome.runtime.lastError);
+        // Save to storage using centralized function (handles timestamp & sync)
+        saveDashboardState()
+            .then(() => {
+                // Success flow
+                setTimeout(() => {
+                    // Determine destination name for toast
+                    const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
+                    showToast(`Moved to ${folderName} \u2713`);
+
+                    // FIX: Force re-processing of the original card to generate proxy
+                    if (cardEl) {
+                        cardEl.classList.remove('plugin-dashboard-processed');
+                        // If Uncategorized, ensure it's visible again
+                        if (!folderId) {
+                            const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
+                            gridItem.style.display = '';
+                            gridItem.style.visibility = '';
+                            gridItem.classList.remove('plugin-hidden-grid-item');
+                            cardEl.dataset.pluginHidden = 'false';
+                            cardEl.classList.remove('card-fade-out');
+                        }
+                    }
+
+                    // Re-run the dashboard organizer to reflect changes (create proxy)
+                    runDashboardOrganizer();
+                }, 50);
+            })
+            .catch((err) => {
+                console.error('[NotebookLM FoldNest] Storage error:', err);
                 // Rollback on error
                 if (oldFolderId) dashboardState.mappings[notebookUrl] = oldFolderId;
                 else delete dashboardState.mappings[notebookUrl];
                 showToast("Failed to move notebook. Please try again.");
-                return;
-            }
-
-            // Success flow
-            setTimeout(() => {
-                // Determine destination name for toast
-                const folderName = folderId ? dashboardState.folders[folderId]?.name : "Uncategorized";
-                showToast(`Moved to ${folderName} \u2713`);
-
-                // FIX: Force re-processing of the original card to generate proxy
-                if (cardEl) {
-                    cardEl.classList.remove('plugin-dashboard-processed');
-                    // If Uncategorized, ensure it's visible again
-                    if (!folderId) {
-                        const gridItem = cardEl.closest('.project-tile, .mat-grid-tile, .projects-dashboard-item') || cardEl.parentElement || cardEl;
-                        gridItem.style.display = '';
-                        gridItem.style.visibility = '';
-                        gridItem.classList.remove('plugin-hidden-grid-item');
-                        cardEl.dataset.pluginHidden = 'false';
-                        cardEl.classList.remove('card-fade-out');
-                    }
-                }
-
-                // Re-run the dashboard organizer to reflect changes (create proxy)
-                runDashboardOrganizer();
-            }, 50);
-        });
+            });
 
     } catch (e) {
         console.error('[NotebookLM FoldNest] moveNotebookToFolder error:', e);
@@ -5283,11 +5295,11 @@ function importDashboardFolders() {
                         throw new Error("Invalid dashboard backup file");
                     }
 
-                    showConfirmModal("Replace existing dashboard folders?", () => {
+                    showConfirmModal("Replace existing dashboard folders?", async () => {
                         dashboardState.folders = data.folders;
                         dashboardState.mappings = data.mappings || {};
                         if (data.settings) dashboardState.settings = data.settings;
-                        saveDashboardState();
+                        await saveDashboardState();
                         location.reload();
                     });
                 } catch (err) {
