@@ -1463,6 +1463,11 @@ function saveState() {
         if (!stateKey) return;
 
         // v0.8.5: Local-only storage (no sync limits to worry about)
+        // Update sync metadata to flag local change
+        if (!appState._syncMeta) appState._syncMeta = {};
+        appState._syncMeta.lastModified = Date.now();
+        // appState._syncMeta.version = getExtensionVersion(); 
+
         chrome.storage.local.set({ [stateKey]: appState }, () => {
             if (chrome.runtime.lastError) {
                 console.error('[NotebookLM FoldNest] Save failed:', chrome.runtime.lastError.message);
@@ -1484,6 +1489,12 @@ function saveDashboardState() {
 
     try {
         console.debug('[NotebookLM FoldNest] Saving dashboard state...');
+
+        // Update sync metadata to flag local change
+        if (!dashboardState._syncMeta) dashboardState._syncMeta = {};
+        dashboardState._syncMeta.lastModified = Date.now();
+        // dashboardState._syncMeta.version = getExtensionVersion();
+
         chrome.storage.local.set({ [DASHBOARD_STATE_KEY]: dashboardState }, () => {
             if (chrome.runtime.lastError) {
                 console.error('[NotebookLM FoldNest] Failed to save dashboard state:', chrome.runtime.lastError.message);
