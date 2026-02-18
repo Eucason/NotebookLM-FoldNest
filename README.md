@@ -97,12 +97,12 @@ The Dashboard View provides notebook-level organization across your entire Noteb
 - **Clear Button**: One-click search reset with visual feedback
 
 #### Data Management
-- **Export Configuration**:
+- **Download configuration**:
   - JSON export includes all folders, mappings, settings, and metadata
   - Timestamped backup files for version control
   - File naming: `notebooklm-dashboard-folders.json`
 
-- **Import Configuration**:
+- **Upload configuration**:
   - Restore complete dashboard state from backup
   - Confirmation modal prevents accidental overwrites
   - **Important**: Refresh page after import to see changes
@@ -630,7 +630,7 @@ featureStatus = {
 5. Try disabling and re-enabling sync (re-authenticates)
 
 ### Data Loss After Update
-1. **Before updating**: Always export configuration
+1. **Before updating**: Always download configuration
 2. Check `chrome://extensions` for extension version
 3. If data missing: Import from backup JSON file
 4. If no backup: Data may be unrecoverable (local storage cleared)

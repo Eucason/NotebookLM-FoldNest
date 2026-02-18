@@ -207,7 +207,17 @@ const DEFAULT_SELECTORS = {
         '.project-buttons-flow',
         '.project-grid',
         '.notebooks-grid',
+        '.notebooks-grid',
         '[role="list"]'
+    ],
+    notebookIcon: [
+        '.notebook-icon',
+        'button[aria-label="Change icon"]',
+        '.emoji-picker-trigger',
+        '.chat-panel .notebook-icon',
+        // Fallback: look for large emojis in header/chat areas
+        'h1 .emoji',
+        '.notebook-header .emoji'
     ]
 };
 
@@ -976,6 +986,61 @@ function getNotebookId() {
         return match ? match[1] : null;
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Failed to get notebook ID:', e.message);
+        return null;
+    }
+}
+
+function getCurrentNotebookTitle() {
+    try {
+        let title = '';
+
+        // Method 1: Input field (Most accurate for editable title)
+        const input = document.querySelector('input[aria-label="Rename notebook"]');
+        if (input) title = input.value;
+
+        // Method 2: Document Title
+        if (!title && document.title && document.title.includes(' - NotebookLM')) {
+            title = document.title.replace(' - NotebookLM', '').trim();
+        }
+
+        // Method 3: Selector fallback
+        if (!title) {
+            const titleEl = document.querySelector('.notebook-title, .title-text');
+            if (titleEl) title = titleEl.innerText;
+        }
+
+        if (!title) return null;
+
+        // --- NEW: Emoji Detection ---
+        // Check if there's a separate emoji icon and prepend it
+        try {
+            const iconSelectors = activeSelectors.notebookIcon || [
+                '.notebook-icon',
+                'button[aria-label="Change icon"]',
+                '.emoji-picker-trigger'
+            ];
+
+            for (const sel of iconSelectors) {
+                const iconEl = document.querySelector(sel);
+                if (iconEl) {
+                    const iconText = (iconEl.innerText || iconEl.textContent || '').trim();
+                    // Basic emoji check (regex for emoji ranges)
+                    // This regex covers many common emoji ranges
+                    const isEmoji = /\p{Emoji}/u.test(iconText);
+
+                    if (isEmoji && iconText.length < 10 && !title.includes(iconText)) {
+                        title = `${iconText} ${title}`;
+                        break; // Found one, stop looking
+                    }
+                }
+            }
+        } catch (err) {
+            // Ignore emoji errors, just return title
+        }
+
+        return title;
+    } catch (e) {
+        console.debug('[NotebookLM FoldNest] Get current title error:', e);
         return null;
     }
 }
@@ -2357,7 +2422,7 @@ function exportFolders() {
         const data = {
             version: getExtensionVersion(),
             exportedAt: new Date().toISOString(),
-            description: "NotebookLM Pro Tree backup",
+            description: "NotebookLM FoldNest backup",
             notebookId: notebookId,
             source: appState.source,
             studio: appState.studio,
@@ -2367,15 +2432,40 @@ function exportFolders() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `notebooklm-pro-${notebookId ? notebookId.substring(0, 8) : 'backup'}.json`;
+
+        // Generate filename: notebooklm-First 3 Words...
+        let namePart = notebookId ? notebookId.substring(0, 8) : 'backup';
+        const title = getCurrentNotebookTitle();
+
+        if (title) {
+            const words = title.trim().split(/\s+/);
+
+            // Check for leading emoji/symbol (no alphanumeric characters)
+            // If found, include it plus 3 words (total 4 tokens)
+            let limit = 3;
+            if (words.length > 0 && !/[a-zA-Z0-9]/.test(words[0])) {
+                limit = 4;
+            }
+
+            if (words.length > limit) {
+                namePart = words.slice(0, limit).join(' ') + '...';
+            } else {
+                namePart = title;
+            }
+        }
+
+        // Sanitize for filename (keep unicode like emoji, but remove reserved chars)
+        // Windows reserved: < > : " / \ | ? *
+        const safeName = namePart.replace(/[<>:"\/\\|?*]/g, '');
+        a.download = `notebooklm-${safeName}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ Config exported");
+        showToast("✅ Config exported");
     } catch (e) {
         console.error('[NotebookLM FoldNest] Export failed:', e);
-        showToast("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Export failed");
+        showToast("❌ Export failed");
     }
 }
 
@@ -2707,8 +2797,8 @@ function injectContainer(anchorEl, context) {
             <button class="plugin-btn add-folder" title="Create New Folder">${ICONS.newFolder}</button>
             <button class="plugin-btn secondary expand-all" title="Expand All">${ICONS.expandAll}</button>
             <button class="plugin-btn secondary collapse-all" title="Collapse All">${ICONS.collapseAll}</button>
-            <button class="plugin-btn secondary export-btn" title="Export Config">${ICONS.export}</button>
-            <button class="plugin-btn secondary import-btn" title="Import Config">${ICONS.import}</button>
+            <button class="plugin-btn secondary export-btn" title="Download config">${ICONS.export}</button>
+            <button class="plugin-btn secondary import-btn" title="Upload config">${ICONS.import}</button>
             <button class="plugin-btn secondary reset-btn" title="Reset Tree">${ICONS.restart}</button>
             ${rebuildBtn}
             ${focusBtn}
@@ -3432,7 +3522,7 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
             }
         } else {
             iconElement = document.createElement('span');
-            iconElement.innerText = 'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾';
+            iconElement.innerText = '📄';
             iconElement.style.marginRight = '8px';
         }
     } else {
@@ -4060,8 +4150,8 @@ function injectDashboardContainer(anchorEl) {
             createEl('button', { className: 'plugin-btn add-folder', title: 'Create New Folder' }, [getIconElement('newFolder')]),
             createEl('button', { className: 'plugin-btn secondary expand-all', title: 'Expand All Folders' }, [getIconElement('unfoldMore')]),
             createEl('button', { className: 'plugin-btn secondary collapse-all', title: 'Collapse All Folders' }, [getIconElement('unfoldLess')]),
-            createEl('button', { className: 'plugin-btn secondary export-btn', title: 'Export Config' }, [getIconElement('export')]),
-            createEl('button', { className: 'plugin-btn secondary import-btn', title: 'Import Config' }, [getIconElement('import')]),
+            createEl('button', { className: 'plugin-btn secondary export-btn', title: 'Download config' }, [getIconElement('export')]),
+            createEl('button', { className: 'plugin-btn secondary import-btn', title: 'Upload config' }, [getIconElement('import')]),
             createEl('button', { className: 'plugin-btn secondary reset-btn', title: 'Reset All Folders' }, [getIconElement('restart')])
         ]);
 
@@ -4169,7 +4259,7 @@ let lastFolderStateHash = null;
 function getDashboardFolderHash() {
     if (!dashboardState || !dashboardState.folders) return '';
 
-    // Quick structural hash â€” just folder IDs, names, hierarchy, order, and open state
+    // Quick structural hash — just folder IDs, names, hierarchy, order, and open state
     return Object.values(dashboardState.folders)
         .sort((a, b) => (a.order || 0) - (b.order || 0))
         .map(f => `${f.id}:${f.name}:${f.parentId}:${f.order}:${f.isOpen}:${f.color}`)
@@ -4529,7 +4619,7 @@ function processDashboardNotebooks() {
                         }
                         console.debug(`[FoldNest] Upgraded ghost proxy for "${title}" (${notebookId})`);
                     } else {
-                        // No ghost exists or already upgraded â€” create/ensure real proxy normally
+                        // No ghost exists or already upgraded — create/ensure real proxy normally
                         addNotebookToFolderView(notebookId, title, folderId, el);
                     }
                 }
@@ -4673,7 +4763,7 @@ function buildGhostProxiesFromStorage() {
 
         console.debug(`[FoldNest] Building ghosts for ${allMappedIds.length} mapped notebooks...`);
 
-        // Reverse-lookup: build { notebookId â†’ title } from notebookTitles cache
+        // Reverse-lookup: build { notebookId → title } from notebookTitles cache
         const idToTitle = {};
         const notebookTitles = dashboardState.notebookTitles || {};
         for (const [title, ids] of Object.entries(notebookTitles)) {
