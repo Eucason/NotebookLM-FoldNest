@@ -2464,7 +2464,7 @@ function exportFolders() {
         URL.revokeObjectURL(url);
         showToast("✅ Config downloaded");
     } catch (e) {
-        console.error('[NotebookLM FoldNest] Export failed:', e);
+        console.error('[NotebookLM FoldNest] Download failed:', e);
         showToast("❌ Download failed");
     }
 }
@@ -2490,7 +2490,7 @@ function importFolders() {
                         location.reload();
                     });
                 } catch (err) {
-                    console.debug('[NotebookLM FoldNest] Import error:', err);
+                    console.debug('[NotebookLM FoldNest] Upload error:', err);
                     alert("Upload failed: " + err.message);
                 }
             };
@@ -2498,7 +2498,7 @@ function importFolders() {
         };
         input.click();
     } catch (e) {
-        console.error('[NotebookLM FoldNest] Import setup failed:', e);
+        console.error('[NotebookLM FoldNest] Upload setup failed:', e);
     }
 }
 
@@ -5360,7 +5360,7 @@ function exportDashboardFolders() {
         URL.revokeObjectURL(url);
         showToast("Dashboard config downloaded");
     } catch (e) {
-        console.error('[NotebookLM FoldNest] Dashboard export failed:', e);
+        console.error('[NotebookLM FoldNest] Dashboard download failed:', e);
         showToast("Download failed");
     }
 }
@@ -5393,7 +5393,7 @@ function importDashboardFolders() {
                         location.reload();
                     });
                 } catch (err) {
-                    console.debug('[NotebookLM FoldNest] Dashboard import error:', err);
+                    console.debug('[NotebookLM FoldNest] Dashboard upload error:', err);
                     alert("Upload failed: " + err.message);
                 }
             };
@@ -5401,7 +5401,7 @@ function importDashboardFolders() {
         };
         input.click();
     } catch (e) {
-        console.error('[NotebookLM FoldNest] Dashboard import setup failed:', e);
+        console.error('[NotebookLM FoldNest] Dashboard upload setup failed:', e);
     }
 }
 
