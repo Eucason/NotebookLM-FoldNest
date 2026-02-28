@@ -6,14 +6,25 @@
     /* Opaque white */
     --plugin-bg-hover: rgba(0, 0, 0, 0.04);
     --plugin-bg-input: #FFFFFF;
-    --plugin-bg-pinned: transparent;
+    --plugin-bg-pinned: rgba(255, 138, 101, 0.06);
     --plugin-text: #3c4043;
     --plugin-text-secondary: #5f6368;
     --plugin-border: transparent;
     --plugin-border-light: #E8EAED;
-    --plugin-accent: #1a73e8;
-    --plugin-icon-color: #5f6368;
-    --plugin-accent-hover: rgba(26, 115, 232, 0.1);
+    --plugin-accent: #00BCD4;
+    --plugin-icon-color: #26A69A;
+    --plugin-accent-hover: rgba(0, 188, 212, 0.1);
+
+    /* Multi-color palette */
+    --plugin-folder-color: #FF9800;
+    --plugin-folder-hover: rgba(255, 152, 0, 0.08);
+    --plugin-pin-color: #FF7043;
+    --plugin-pin-hover: rgba(255, 112, 66, 0.08);
+    --plugin-task-color: #9575CD;
+    --plugin-task-hover: rgba(149, 117, 205, 0.10);
+    --plugin-success-color: #66BB6A;
+    --plugin-success-hover: rgba(102, 187, 106, 0.10);
+    --plugin-search-focus: #0097A7;
 
     /* Sidebar Width (Default: 260px) */
     --sidebar-width: 260px;
@@ -25,14 +36,25 @@ body.dark-theme {
     /* Standard Material Dark */
     --plugin-bg-hover: rgba(255, 255, 255, 0.08);
     --plugin-bg-input: #202124;
-    --plugin-bg-pinned: #28292a;
+    --plugin-bg-pinned: rgba(255, 171, 145, 0.06);
     --plugin-text: #e8eaed;
     --plugin-text-secondary: #9aa0a6;
     --plugin-border: #5f6368;
     --plugin-border-light: #3c4043;
-    --plugin-accent: #8ab4f8;
-    --plugin-icon-color: #8ab4f8;
-    --plugin-accent-hover: rgba(138, 180, 248, 0.15);
+    --plugin-accent: #4DD0E1;
+    --plugin-icon-color: #4DD0E1;
+    --plugin-accent-hover: rgba(77, 208, 225, 0.15);
+
+    /* Multi-color palette (dark) */
+    --plugin-folder-color: #FFB74D;
+    --plugin-folder-hover: rgba(255, 183, 77, 0.12);
+    --plugin-pin-color: #FFAB91;
+    --plugin-pin-hover: rgba(255, 171, 145, 0.12);
+    --plugin-task-color: #B39DDB;
+    --plugin-task-hover: rgba(179, 157, 219, 0.12);
+    --plugin-success-color: #81C784;
+    --plugin-success-hover: rgba(129, 199, 132, 0.12);
+    --plugin-search-focus: #4DD0E1;
 }
 
 /* --- HIDDEN ITEMS --- */
@@ -97,7 +119,7 @@ body.dark-theme {
 
 .plugin-sidebar-resizer:hover,
 .plugin-sidebar-resizer.active {
-    background: rgba(26, 115, 232, 0.2);
+    background: rgba(0, 188, 212, 0.25);
 }
 
 .plugin-container {
@@ -258,8 +280,8 @@ body.plugin-sidebar-open .mat-drawer-container {
 }
 
 .plugin-search-area input:focus {
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-    border-color: transparent;
+    box-shadow: 0 1px 4px rgba(0, 151, 167, 0.2);
+    border-color: var(--plugin-search-focus);
 }
 
 /* Search Clear Button */
@@ -315,7 +337,7 @@ body.plugin-sidebar-open .mat-drawer-container {
 }
 
 .plugin-folder-header:hover {
-    background-color: var(--plugin-bg-hover);
+    background-color: var(--plugin-folder-hover);
 }
 
 /* --- UNIVERSAL ARROW STYLES --- */
@@ -347,10 +369,11 @@ body.plugin-sidebar-open .mat-drawer-container {
 
 .folder-icon {
     margin-right: 6px;
+    color: var(--plugin-folder-color);
 }
 
 :root:not(.dark-theme) .folder-icon {
-    filter: brightness(0.8) saturate(1.2);
+    filter: brightness(0.85) saturate(1.3);
 }
 
 .folder-name {
@@ -395,7 +418,8 @@ body.plugin-sidebar-open .mat-drawer-container {
     padding-bottom: 4px;
     margin-bottom: 8px;
     background: var(--plugin-bg-pinned);
-    border-radius: 0;
+    border-radius: 6px;
+    border-left: 3px solid var(--plugin-pin-color);
 }
 
 .plugin-pinned-section .plugin-proxy-item {
@@ -404,7 +428,7 @@ body.plugin-sidebar-open .mat-drawer-container {
 }
 
 .is-pinned-proxy {
-    background-color: var(--plugin-accent-hover) !important;
+    background-color: var(--plugin-pin-hover) !important;
     border-radius: 4px;
 }
 
@@ -463,7 +487,7 @@ body.plugin-sidebar-open .mat-drawer-container {
     margin-right: 10px;
     display: flex;
     align-items: center;
-    color: var(--plugin-icon-color);
+    color: var(--plugin-accent);
 }
 
 .proxy-icon svg,
@@ -762,8 +786,8 @@ body.plugin-focus-mode textarea {
 }
 
 .plugin-task-input-area .expand-options-btn.active {
-    background-color: var(--plugin-accent-hover);
-    color: var(--plugin-accent);
+    background-color: var(--plugin-task-hover);
+    color: var(--plugin-task-color);
 }
 
 /* Task Options Panel */
@@ -832,9 +856,9 @@ body.plugin-focus-mode textarea {
 }
 
 .quick-date-btn:hover {
-    background: var(--plugin-accent-hover);
-    color: var(--plugin-accent);
-    border-color: var(--plugin-accent);
+    background: var(--plugin-task-hover);
+    color: var(--plugin-task-color);
+    border-color: var(--plugin-task-color);
 }
 
 /* Edit Modal Styles */
@@ -934,29 +958,29 @@ body.plugin-focus-mode textarea {
 
 /* Priorities */
 .task-prio-1 {
-    border-left-color: #d93025 !important;
+    border-left-color: #EF5350 !important;
 }
 
 .task-prio-1 .plugin-task-btn.prio {
-    color: #d93025 !important;
+    color: #EF5350 !important;
     opacity: 1;
 }
 
 .task-prio-2 {
-    border-left-color: #fbbc04 !important;
+    border-left-color: #FFA726 !important;
 }
 
 .task-prio-2 .plugin-task-btn.prio {
-    color: #fbbc04 !important;
+    color: #FFA726 !important;
     opacity: 1;
 }
 
 .task-prio-3 {
-    border-left-color: #1a73e8 !important;
+    border-left-color: var(--plugin-task-color) !important;
 }
 
 .task-prio-3 .plugin-task-btn.prio {
-    color: #1a73e8 !important;
+    color: var(--plugin-task-color) !important;
     opacity: 1;
 }
 
@@ -974,8 +998,8 @@ body.plugin-focus-mode textarea {
 }
 
 .plugin-task-item.done .plugin-task-check {
-    background-color: var(--plugin-accent);
-    border-color: var(--plugin-accent);
+    background-color: var(--plugin-success-color);
+    border-color: var(--plugin-success-color);
 }
 
 .plugin-task-content {
@@ -1039,24 +1063,24 @@ body.plugin-focus-mode textarea {
     background-color: rgba(217, 48, 37, 0.1);
 }
 
-/* Description button - blue when has description */
+/* Description button - lavender when has description */
 .plugin-task-btn.desc.has-desc {
-    color: var(--plugin-accent);
+    color: var(--plugin-task-color);
     opacity: 1;
 }
 
 .plugin-task-btn.desc.has-desc:hover {
-    background-color: var(--plugin-accent-hover);
+    background-color: var(--plugin-task-hover);
 }
 
-/* Link button - blue when has source link */
+/* Link button - coral when has source link */
 .plugin-task-btn.link.has-link {
-    color: var(--plugin-accent);
+    color: var(--plugin-pin-color);
     opacity: 1;
 }
 
 .plugin-task-btn.link.has-link:hover {
-    background-color: var(--plugin-accent-hover);
+    background-color: var(--plugin-pin-hover);
 }
 
 /* Description Modal */
@@ -1086,7 +1110,7 @@ body.plugin-focus-mode textarea {
 
 .plugin-desc-source .source-icon {
     display: flex;
-    color: var(--plugin-accent);
+    color: var(--plugin-pin-color);
 }
 
 .plugin-desc-modal textarea {
@@ -1115,7 +1139,7 @@ body.plugin-focus-mode textarea {
     justify-content: center;
     width: 32px;
     height: 32px;
-    background: var(--plugin-accent);
+    background: var(--plugin-task-color);
     color: white;
     border-radius: 50%;
     cursor: pointer;
@@ -1150,7 +1174,7 @@ body.plugin-focus-mode textarea {
 /* --- COMPLETED SECTION --- */
 .plugin-completed-group {
     margin-top: 8px;
-    border-top: 1px dashed var(--plugin-border-light);
+    border-top: 1px dashed var(--plugin-success-color);
     padding-top: 4px;
 }
 
@@ -1258,6 +1282,7 @@ body.plugin-focus-mode textarea {
 
 .plugin-task-item.done {
     opacity: 0.6;
+    border-left-color: var(--plugin-success-color) !important;
 }
 
 .plugin-task-item.done:hover {
@@ -1379,7 +1404,7 @@ body.plugin-focus-mode textarea {
 
 .plugin-popout-btn:hover {
     background: var(--plugin-bg-hover);
-    color: var(--plugin-accent);
+    color: var(--plugin-pin-color);
 }
 
 /* Active note toolbar popout button */
@@ -1533,8 +1558,8 @@ body.plugin-sidebar-open .mat-sidenav-container {
 
 .plugin-dashboard-notebook:hover {
     background: var(--plugin-bg-hover);
-    border-color: var(--plugin-accent);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border-color: var(--plugin-folder-color);
+    box-shadow: 0 2px 8px rgba(255, 152, 0, 0.1);
 }
 
 .plugin-dashboard-notebook .proxy-icon {
@@ -1585,7 +1610,7 @@ body.plugin-sidebar-open .mat-sidenav-container {
 
 .plugin-dashboard-notebook .action-icon:hover {
     background: var(--plugin-bg-hover);
-    color: var(--plugin-accent);
+    color: var(--plugin-folder-color);
 }
 
 .plugin-dashboard-notebook .action-icon.eject:hover {
@@ -1613,9 +1638,9 @@ body.plugin-sidebar-open .mat-sidenav-container {
 }
 
 .plugin-add-to-folder-btn:hover {
-    background: var(--plugin-bg-hover);
-    border-color: var(--plugin-accent);
-    color: var(--plugin-accent);
+    background: var(--plugin-folder-hover);
+    border-color: var(--plugin-folder-color);
+    color: var(--plugin-folder-color);
 }
 
 .plugin-add-to-folder-btn svg {
