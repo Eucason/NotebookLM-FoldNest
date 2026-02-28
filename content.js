@@ -906,7 +906,7 @@ function renderIconToString(iconKey, size = '20px', color = 'currentColor') {
 
 // --- ICONS DATA ---
 const ICONS = {
-    folder: { d: 'M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Z', fill: '#8ab4f8' },
+    folder: { d: 'M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Z', fill: '#FFB74D' },
     newFolder: { d: 'M560-320h80v-80h80v-80h-80v-80h-80v80h-80v80h80v80ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z' },
     restart: { d: 'M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v240H560v-80h135q-31-40-74.5-65T540-730q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z' },
     tune: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M440-120v-240h80v80h320v80H520v80h-80Zm-320-80v-80h240v80H120Zm160-200v-80H120v-80h160v-80h80v240h-80Zm160-80v-80h400v80H440Zm160-200v-240h80v80h160v80H680v80h-80Zm-480-80v-80h400v80H120Z"/></svg>',
@@ -948,7 +948,7 @@ const ICONS = {
 
     // NEW ICONS FOR v0.8.3
     selectAll: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M260-160q-42 0-71-29t-29-71v-440q0-42 29-71t71-29h440q42 0 71 29t29 71v440q0 42-29 71t-71 29H260Zm0-80h440v-440H260v440Zm178-106 208-208-56-57-152 152-82-82-56 57 138 138ZM260-700v440-440Z"/></svg>',
-    checkOn: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="#1a73e8"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>',
+    checkOn: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="#66BB6A"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>',
     checkOff: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="#5f6368"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Z"/></svg>',
     checkIndet: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="#5f6368"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm120-240v-80h320v80H320Z"/></svg>',
 
@@ -1875,7 +1875,7 @@ function createTaskSectionElement(section, sectionTasks, allTasks) {
     if (colorBtn) {
         colorBtn.onclick = (e) => {
             e.stopPropagation();
-            const colors = [null, '#e8eaed', '#f28b82', '#fbbc04', '#34a853', '#4285f4', '#d93025'];
+            const colors = [null, '#EF5350', '#FF7043', '#FF9800', '#FFB74D', '#FFF176', '#AED581', '#66BB6A', '#26A69A', '#4DD0E1', '#42A5F5', '#5C6BC0', '#7E57C2', '#B39DDB', '#F48FB1', '#BCAAA4', '#90A4AE'];
             const cur = section.color || null;
             const next = colors[(colors.indexOf(cur) + 1) % colors.length];
             section.color = next;
@@ -3163,7 +3163,7 @@ function buildFolderNode(folder, allFolders, context) {
 
     header.innerHTML = `
         <span class="arrow">${ICONS.chevron}</span>
-        <span class="folder-icon" style="color:${folder.color || '#8ab4f8'}">${ICONS.folder}</span>
+        <span class="folder-icon" style="color:${folder.color || '#FFB74D'}">${ICONS.folder}</span>
         <span class="folder-name"></span>
         <div class="folder-actions">
              ${folderCheckHtml}
@@ -3208,7 +3208,7 @@ function buildFolderNode(folder, allFolders, context) {
     if (colorPickBtn) {
         colorPickBtn.onclick = (e) => {
             e.stopPropagation();
-            const colors = [null, '#e8eaed', '#f28b82', '#fbbc04', '#34a853', '#4285f4', '#d93025'];
+            const colors = [null, '#EF5350', '#FF7043', '#FF9800', '#FFB74D', '#FFF176', '#AED581', '#66BB6A', '#26A69A', '#4DD0E1', '#42A5F5', '#5C6BC0', '#7E57C2', '#B39DDB', '#F48FB1', '#BCAAA4', '#90A4AE'];
             const cur = folder.color || null;
             const next = colors[(colors.indexOf(cur) + 1) % colors.length];
             folder.color = next;
@@ -3558,7 +3558,7 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
         } else {
             // Fallback to generic document icon
             const span = document.createElement('span');
-            span.innerHTML = `<svg style="color:#8ab4f8;" xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"></path></svg>`;
+            span.innerHTML = `<svg style="color:#4DD0E1;" xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"></path></svg>`;
             iconElement = span.firstElementChild;
         }
     }
@@ -4157,7 +4157,7 @@ function injectDashboardContainer(anchorEl) {
 
         // 3. Create Search Area
         const searchDiv = createEl('div', { className: 'plugin-search-area' }, [
-            getIconElement('search', '16px', '#5f6368'),
+            getIconElement('search', '16px', '#0097A7'),
             createEl('input', { type: 'text', placeholder: 'Search notebooks...' }),
             createEl('span', { className: 'plugin-icon-btn search-clear-btn', title: 'Clear search' }, [getIconElement('cancel', '16px')])
         ]);
@@ -4364,7 +4364,7 @@ function buildDashboardFolderNode(folder, allFolders) {
         }
     }, [
         createEl('span', { className: 'arrow dashboard-expand' }, [getIconElement(expandIconKey)]),
-        createEl('span', { className: 'folder-icon', style: { color: folder.color || '#8ab4f8' } }, [getIconElement('folder')]),
+        createEl('span', { className: 'folder-icon', style: { color: folder.color || '#FFB74D' } }, [getIconElement('folder')]),
         createEl('span', { className: 'folder-name' }, [folder.name]),
         createEl('div', { className: 'folder-actions' }, [
             createEl('span', { className: 'action-icon move-up', title: 'Move Up', onclick: (e) => { e.stopPropagation(); moveDashboardFolder(folder.id, -1); } }, [getIconElement('up')]),
@@ -5210,7 +5210,7 @@ function showDashboardColorPicker(e, folder) {
         const existing = document.querySelector('.plugin-color-picker');
         if (existing) existing.remove();
 
-        const colors = ['#8ab4f8', '#81c995', '#f28b82', '#fdd663', '#d7aefb', '#78d9ec', '#ff8a65', '#a7ffeb'];
+        const colors = ['#EF5350', '#FF7043', '#FF9800', '#FFB74D', '#FFF176', '#AED581', '#66BB6A', '#26A69A', '#4DD0E1', '#42A5F5', '#5C6BC0', '#7E57C2', '#B39DDB', '#F48FB1', '#BCAAA4', '#90A4AE'];
 
         const picker = document.createElement('div');
         picker.className = 'plugin-color-picker plugin-dropdown-menu';
