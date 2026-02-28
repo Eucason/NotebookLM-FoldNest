@@ -1650,11 +1650,11 @@ body.plugin-sidebar-open .mat-sidenav-container {
 
 /* Color picker for dashboard */
 .plugin-color-picker {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(6, 24px);
     gap: 6px;
     padding: 10px;
-    min-width: 140px;
+    min-width: 180px;
 }
 
 .plugin-color-picker .color-swatch {

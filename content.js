@@ -1875,7 +1875,7 @@ function createTaskSectionElement(section, sectionTasks, allTasks) {
     if (colorBtn) {
         colorBtn.onclick = (e) => {
             e.stopPropagation();
-            const colors = [null, '#FFB74D', '#4DD0E1', '#B39DDB', '#81C784', '#FF8A65', '#F48FB1'];
+            const colors = [null, '#EF5350', '#FF7043', '#FF9800', '#FFB74D', '#FFF176', '#AED581', '#66BB6A', '#26A69A', '#4DD0E1', '#42A5F5', '#5C6BC0', '#7E57C2', '#B39DDB', '#F48FB1', '#BCAAA4', '#90A4AE'];
             const cur = section.color || null;
             const next = colors[(colors.indexOf(cur) + 1) % colors.length];
             section.color = next;
@@ -3208,7 +3208,7 @@ function buildFolderNode(folder, allFolders, context) {
     if (colorPickBtn) {
         colorPickBtn.onclick = (e) => {
             e.stopPropagation();
-            const colors = [null, '#FFB74D', '#4DD0E1', '#B39DDB', '#81C784', '#FF8A65', '#F48FB1'];
+            const colors = [null, '#EF5350', '#FF7043', '#FF9800', '#FFB74D', '#FFF176', '#AED581', '#66BB6A', '#26A69A', '#4DD0E1', '#42A5F5', '#5C6BC0', '#7E57C2', '#B39DDB', '#F48FB1', '#BCAAA4', '#90A4AE'];
             const cur = folder.color || null;
             const next = colors[(colors.indexOf(cur) + 1) % colors.length];
             folder.color = next;
@@ -5210,7 +5210,7 @@ function showDashboardColorPicker(e, folder) {
         const existing = document.querySelector('.plugin-color-picker');
         if (existing) existing.remove();
 
-        const colors = ['#FFB74D', '#4DD0E1', '#B39DDB', '#81C784', '#FF8A65', '#90CAF9', '#F48FB1', '#FFF176'];
+        const colors = ['#EF5350', '#FF7043', '#FF9800', '#FFB74D', '#FFF176', '#AED581', '#66BB6A', '#26A69A', '#4DD0E1', '#42A5F5', '#5C6BC0', '#7E57C2', '#B39DDB', '#F48FB1', '#BCAAA4', '#90A4AE'];
 
         const picker = document.createElement('div');
         picker.className = 'plugin-color-picker plugin-dropdown-menu';
