@@ -227,7 +227,7 @@ let activeSelectors = JSON.parse(JSON.stringify(DEFAULT_SELECTORS));
 const DEFAULT_STATE = {
     source: { folders: {}, mappings: {}, pinned: [], tasks: [], taskSections: {} },
     studio: { folders: {}, mappings: {}, pinned: [] },
-    settings: { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false }
+    settings: { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false, sourceExplorerOpen: true }
 };
 
 let appState = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -239,6 +239,58 @@ let mainObserver = null;
 let healthCheckInterval = null;
 let lastHealthStatus = null;
 let isProcessingItems = false; // Race condition guard for processItems
+
+// --- SOURCE EXPLORER STATE ---
+let sourceFilterState = { query: '', activeFilter: 'all', isLocked: false };
+try {
+    const savedFilter = localStorage.getItem('foldnest_filter_state');
+    if (savedFilter) {
+        sourceFilterState = JSON.parse(savedFilter);
+    }
+} catch (e) {
+    console.debug('[NotebookLM FoldNest] Error loading filter state', e);
+}
+
+function saveSourceFilterState() {
+    try {
+        if (sourceFilterState.isLocked) {
+            localStorage.setItem('foldnest_filter_state', JSON.stringify(sourceFilterState));
+        } else {
+            localStorage.removeItem('foldnest_filter_state');
+        }
+    } catch (e) {
+        console.debug('[NotebookLM FoldNest] Error saving filter state', e);
+    }
+}
+
+// Maps native mat-icon text content to filter category
+const SOURCE_TYPE_MAP = {
+    'drive_pdf': 'pdf',
+    'insert_drive_file': 'pdf',
+    'article': 'gdocs',
+    'description': 'gdocs',
+    'link': 'web',
+    'video_library': 'youtube',
+    'audio_file': 'audio',
+    'movie': 'video',
+    'videocam': 'video',
+    'smart_display': 'video',
+    'play_circle': 'video',
+    'image': 'images',
+    'photo': 'images',
+    'photo_library': 'images'
+};
+
+const SOURCE_FILTER_CHIPS = [
+    { key: 'all', label: 'All', color: '#4DD0E1', icon: 'layers' },
+    { key: 'pdf', label: 'PDFs', color: '#EF5350', icon: 'pdf' },
+    { key: 'gdocs', label: 'GDocs', color: '#42A5F5', icon: 'docs' },
+    { key: 'web', label: 'Web', color: '#66BB6A', icon: 'web' },
+    { key: 'youtube', label: 'YouTube', color: '#FF7043', icon: 'yt' },
+    { key: 'audio', label: 'Audio', color: '#AB47BC', icon: 'audio' },
+    { key: 'video', label: 'Video', color: '#FFA726', icon: 'video' },
+    { key: 'images', label: 'Images', color: '#26C6DA', icon: 'img' }
+];
 
 // --- v0.9.0 DASHBOARD STATE (FoldNest) ---
 const DASHBOARD_STATE_KEY = 'notebookLM_dashboardFolders';
@@ -773,7 +825,8 @@ function safeQueryAll(parent, selector) {
 function safeGetText(element) {
     try {
         if (!element) return '';
-        return (element.innerText || element.textContent || element.value || '').trim();
+        // Priority: aria-label (for tooltip elements), value (inputs), text/innerText
+        return (element.getAttribute('aria-label') || element.getAttribute('aria-description') || element.innerText || element.textContent || element.value || '').trim();
     } catch (e) {
         return '';
     }
@@ -956,6 +1009,7 @@ const ICONS = {
     newWindow: '<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h240v80H200v560h560v-240h80v240q0 33-23.5 56.5T760-120H200Zm440-400v-120H520v-80h120v-120h80v120h120v80H720v120h-80Z"/></svg>',
 
     // v0.9.0 - Dashboard Folder Organization (FoldNest)
+    lock: '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M240-80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h40v-80q0-83 58.5-141.5T480-920q83 0 141.5 58.5T680-720v80h40q33 0 56.5 23.5T800-560v400q0 33-23.5 56.5T720-80H240Zm0-80h480v-400H240v400Zm240-120q33 0 56.5-23.5T560-360q0-33-23.5-56.5T480-440q-33 0-56.5 23.5T400-360q0 33 23.5 56.5T480-280ZM360-640h240v-80q0-50-35-85t-85-35q-50 0-85 35t-35 85v80ZM240-160v-400 400Z"/></svg>',
     unfoldMore: { d: 'M480-120 300-300l58-58 122 122 122-122 58 58-180 180ZM358-598l-58-58 180-180 180 180-58 58-122-122-122 122Z' },
     unfoldLess: { d: 'm356-160-56-56 180-180 180 180-56 56-124-124-124 124Zm124-404L300-744l56-56 124 124 124-124 56 56-180 180Z' },
     notebook: '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M120-40v-80h80v-760h400v160h200v600h80v80H120Zm240-160h200v-80H360v80Zm0-160h200v-80H360v80Zm-80-280h400v-200H280v200Z"/></svg>',
@@ -1408,7 +1462,8 @@ function init() {
                 }
 
                 // Ensure all required properties exist
-                if (!appState.settings) appState.settings = { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false };
+                if (!appState.settings) appState.settings = { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false, sourceExplorerOpen: true };
+                if (appState.settings.sourceExplorerOpen === undefined) appState.settings.sourceExplorerOpen = true;
                 if (!appState.source) appState.source = { folders: {}, mappings: {}, pinned: [], tasks: [] };
                 if (!appState.studio) appState.studio = { folders: {}, mappings: {}, pinned: [] };
                 if (!appState.source.pinned) appState.source.pinned = [];
@@ -2356,6 +2411,261 @@ function filterProxies(context, query) {
     }
 }
 
+// --- SOURCE EXPLORER: Filter by type + search query ---
+function filterSourcesByType() {
+    try {
+        const container = document.getElementById('plugin-source-root');
+        if (!container) return;
+
+        const { query, activeFilter } = sourceFilterState;
+        const term = (query || '').toLowerCase().trim();
+        const filter = activeFilter || 'all';
+
+        // If no filter and no query, reset everything to visible
+        if (filter === 'all' && !term) {
+            container.querySelectorAll('.plugin-proxy-item').forEach(el => {
+                el.style.display = '';
+                el.removeAttribute('data-source-filtered');
+            });
+            container.querySelectorAll('.plugin-tree-node').forEach(el => {
+                el.style.display = '';
+            });
+            // Reset native items
+            document.querySelectorAll('.plugin-detected-row').forEach(el => {
+                el.style.display = '';
+            });
+            return;
+        }
+
+        const proxies = container.querySelectorAll('.plugin-proxy-item');
+        // Get all native rows that are NOT currently proxied (hidden)
+        const nativeRows = Array.from(document.querySelectorAll('.plugin-detected-row')).filter(r =>
+            !r.classList.contains('plugin-hidden-native') &&
+            (r.classList.contains('single-source-container') || r.querySelector('.source-title'))
+        );
+
+        const matchedFolderIds = new Set();
+        let hasAnyMatch = false;
+
+        proxies.forEach(proxy => {
+            const sourceType = proxy.dataset.sourceType || 'other';
+            const searchTerm = proxy.dataset.searchTerm || proxy.innerText.toLowerCase();
+
+            const typeMatch = (filter === 'all') || (sourceType === filter);
+            const textMatch = !term || searchTerm.includes(term);
+
+            if (typeMatch && textMatch) {
+                proxy.style.display = 'flex';
+                proxy.setAttribute('data-source-filtered', 'visible');
+                hasAnyMatch = true;
+                // Expand parent folders to show match
+                let parent = proxy.parentElement;
+                while (parent && parent !== container) {
+                    if (parent.classList.contains('plugin-node-children')) {
+                        const folderNode = parent.parentElement;
+                        if (folderNode && folderNode.id) {
+                            folderNode.style.display = 'block';
+                            folderNode.classList.add('open');
+                            matchedFolderIds.add(folderNode.id);
+                        }
+                    }
+                    parent = parent.parentElement;
+                }
+            } else {
+                proxy.style.display = 'none';
+                proxy.setAttribute('data-source-filtered', 'hidden');
+            }
+        });
+
+        nativeRows.forEach(native => {
+            const sourceType = native.dataset.sourceType || 'other';
+            const searchTerm = native.dataset.searchTerm || (native.innerText || '').toLowerCase();
+
+            const typeMatch = (filter === 'all') || (sourceType === filter);
+            const textMatch = !term || searchTerm.includes(term);
+
+            if (typeMatch && textMatch) {
+                native.style.display = '';
+                hasAnyMatch = true;
+            } else {
+                native.style.display = 'none';
+            }
+        });
+
+        // Hide folders with no visible children (unless folder name matches)
+        container.querySelectorAll('.plugin-tree-node').forEach(node => {
+            if (matchedFolderIds.has(node.id)) return; // Already shown by child match
+            const header = node.querySelector('.plugin-folder-header .folder-name');
+            if (header) {
+                const folderName = (header.innerText || '').toLowerCase();
+                if (term && folderName.includes(term)) {
+                    node.style.display = 'block';
+                    hasAnyMatch = true;
+                    return;
+                }
+            }
+            // Check if any descendant proxy is visible
+            const hasVisible = node.querySelector('.plugin-proxy-item[data-source-filtered="visible"]');
+            node.style.display = hasVisible ? 'block' : 'none';
+        });
+
+        let emptyMsg = container.querySelector('.plugin-source-empty-msg');
+        if (!hasAnyMatch && (term || filter !== 'all')) {
+            if (!emptyMsg) {
+                emptyMsg = document.createElement('div');
+                emptyMsg.className = 'plugin-source-empty-msg';
+                emptyMsg.style.cssText = 'padding: 20px; text-align: center; color: #9aa0a6; font-size: 13px; font-style: italic;';
+                emptyMsg.textContent = 'No sources match your search.';
+                container.appendChild(emptyMsg);
+            }
+            emptyMsg.style.display = 'block';
+        } else if (emptyMsg) {
+            emptyMsg.style.display = 'none';
+        }
+    } catch (e) {
+        console.debug('[NotebookLM FoldNest] filterSourcesByType error:', e.message);
+    }
+}
+
+// --- SOURCE EXPLORER: Lock View Modal ---
+function showLockViewModal() {
+    const existing = document.getElementById('plugin-confirm-modal');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'plugin-confirm-modal';
+    overlay.className = 'plugin-modal-overlay';
+    overlay.innerHTML = `
+        <div class="plugin-modal-content plugin-lock-modal">
+            <div class="plugin-lock-modal-title">Lock Current View</div>
+            <div class="plugin-lock-modal-sub">Save this filter combination to quickly restore it later.</div>
+            <div class="plugin-lock-modal-input-wrap">
+                <input type="text" class="plugin-lock-modal-input" placeholder="My Custom View" maxlength="50" />
+                <span class="plugin-lock-modal-counter">0/50</span>
+            </div>
+            <div class="plugin-modal-buttons">
+                <button class="plugin-modal-btn cancel">Cancel</button>
+                <button class="plugin-modal-btn confirm plugin-lock-save-btn">Lock View</button>
+            </div>
+        </div>
+    `;
+
+    const closeModal = () => overlay.remove();
+    const input = overlay.querySelector('.plugin-lock-modal-input');
+    const counter = overlay.querySelector('.plugin-lock-modal-counter');
+    const saveBtn = overlay.querySelector('.plugin-lock-save-btn');
+
+    input.oninput = () => {
+        counter.textContent = `${input.value.length}/50`;
+    };
+
+    saveBtn.onclick = () => {
+        const name = input.value.trim();
+        if (!name) {
+            input.style.borderColor = '#EF5350';
+            input.setAttribute('placeholder', 'Please enter a name');
+            return;
+        }
+        if (!sourceFilterState.lockedViews) sourceFilterState.lockedViews = [];
+        sourceFilterState.lockedViews.push({
+            name,
+            query: sourceFilterState.query,
+            filter: sourceFilterState.activeFilter,
+            id: Date.now().toString(36)
+        });
+        saveSourceFilterState();
+        closeModal();
+        renderLockedViewPills();
+        showToast(`View "${name}" locked`);
+    };
+
+    overlay.querySelector('.plugin-modal-btn.cancel').onclick = closeModal;
+    overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+
+    const escHandler = (e) => {
+        if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', escHandler); }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(overlay);
+    input.focus();
+}
+
+// --- SOURCE EXPLORER: Render locked view pills ---
+function renderLockedViewPills() {
+    const mount = document.getElementById('plugin-locked-views-mount');
+    if (!mount) return;
+
+    if (!sourceFilterState.lockedViews || sourceFilterState.lockedViews.length === 0) {
+        mount.innerHTML = '';
+        mount.style.display = 'none';
+        return;
+    }
+
+    mount.style.display = 'flex';
+    mount.innerHTML = '';
+
+    sourceFilterState.lockedViews.forEach((view) => {
+        const pill = document.createElement('div');
+        pill.className = 'plugin-locked-view-pill';
+        const chipDef = SOURCE_FILTER_CHIPS.find(c => c.key === view.filter) || SOURCE_FILTER_CHIPS[0];
+        pill.style.setProperty('--pill-color', chipDef.color);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'pill-name';
+        nameSpan.textContent = view.name;
+
+        const removeBtn = document.createElement('span');
+        removeBtn.className = 'pill-remove';
+        removeBtn.innerHTML = '&times;';
+        removeBtn.title = 'Remove view';
+        removeBtn.onclick = (e) => {
+            e.stopPropagation();
+            sourceFilterState.lockedViews = sourceFilterState.lockedViews.filter(v => v.id !== view.id);
+            saveSourceFilterState();
+            renderLockedViewPills();
+            showToast('View removed');
+        };
+
+        pill.appendChild(nameSpan);
+        pill.appendChild(removeBtn);
+
+        pill.onclick = () => {
+            sourceFilterState.query = view.query || '';
+            sourceFilterState.activeFilter = view.filter || 'all';
+
+            // Update search input
+            const searchInput = document.querySelector('#plugin-source-root .plugin-source-search input');
+            if (searchInput) {
+                searchInput.value = sourceFilterState.query;
+                const clearBtn = document.querySelector('#plugin-source-root .plugin-source-search-clear');
+                if (clearBtn) clearBtn.style.opacity = sourceFilterState.query ? '1' : '0';
+            }
+
+            // Update active chip
+            const chips = document.querySelectorAll('#plugin-source-root .plugin-filter-chip');
+            chips.forEach(c => {
+                const isActive = c.dataset.filter === sourceFilterState.activeFilter;
+                c.classList.toggle('active', isActive);
+                const chipColor = c.style.getPropertyValue('--chip-color');
+                if (isActive) {
+                    c.style.background = chipColor;
+                    c.style.color = '#fff';
+                } else {
+                    c.style.background = 'rgba(255,255,255,0.04)';
+                    c.style.color = chipColor;
+                }
+            });
+
+            saveSourceFilterState();
+            filterSourcesByType();
+            showToast(`View "${view.name}" applied`);
+        };
+
+        mount.appendChild(pill);
+    });
+}
+
 function filterStudioToNote(noteTitle) {
     try {
         if (!noteTitle) return;
@@ -3014,6 +3324,180 @@ function injectContainer(anchorEl, context) {
             };
             if (addTaskBtn) addTaskBtn.onclick = addTaskHandler;
             if (taskInput) taskInput.onkeydown = (e) => { if (e.key === 'Enter') addTaskHandler(); };
+            // --- SOURCE EXPLORER SECTION ---
+            const sourceExplorer = document.createElement('div');
+            sourceExplorer.className = 'plugin-source-explorer';
+            // Inline fallbacks for card shell
+            sourceExplorer.style.cssText = 'margin:12px 8px 14px 8px;border-radius:14px;overflow:hidden;border:1.5px solid rgba(77,208,225,0.40);box-shadow:0 4px 24px rgba(0,0,0,0.30);';
+
+            // --- Section header (collapsible) ---
+            const explorerHeader = document.createElement('div');
+            explorerHeader.className = 'plugin-source-explorer-header';
+            explorerHeader.innerHTML = `
+                <div class="plugin-source-explorer-title">
+                    <span class="plugin-source-explorer-icon">${ICONS.search}</span>
+                    <span class="se-title-text">Source Explorer</span>
+                </div>
+                <span class="plugin-source-explorer-arrow open">${ICONS.chevron}</span>
+            `;
+
+            const explorerBody = document.createElement('div');
+            explorerBody.className = 'plugin-source-explorer-body' + (appState.settings.sourceExplorerOpen ? '' : ' collapsed');
+            if (!appState.settings.sourceExplorerOpen) explorerBody.style.display = 'none';
+
+            explorerHeader.querySelector('.plugin-source-explorer-arrow').classList.toggle('open', appState.settings.sourceExplorerOpen);
+
+            explorerHeader.onclick = () => {
+                appState.settings.sourceExplorerOpen = !appState.settings.sourceExplorerOpen;
+                saveState();
+                explorerBody.style.display = appState.settings.sourceExplorerOpen ? '' : 'none';
+                explorerBody.classList.toggle('collapsed', !appState.settings.sourceExplorerOpen);
+                explorerHeader.querySelector('.plugin-source-explorer-arrow').classList.toggle('open', appState.settings.sourceExplorerOpen);
+            };
+
+            sourceExplorer.appendChild(explorerHeader);
+            sourceExplorer.appendChild(explorerBody);
+
+            // Search bar
+            const searchArea = document.createElement('div');
+            searchArea.className = 'plugin-source-search';
+            searchArea.style.cssText = 'display:flex;align-items:center;gap:10px;background:rgba(32,33,36,0.90);border:2px solid rgba(77,208,225,0.35);border-radius:12px;padding:11px 16px;';
+            searchArea.innerHTML = `
+                <span class="plugin-source-search-icon">${ICONS.search}</span>
+                <input type="text" placeholder="Search sources..." style="flex:1;background:transparent;border:none;outline:none;color:#e8eaed;font-size:14px;min-width:0;padding:2px 0;" />
+                <span class="plugin-source-search-clear" title="Clear">${ICONS.cancel}</span>
+            `;
+
+            const sourceSearchInput = searchArea.querySelector('input');
+            const sourceSearchClear = searchArea.querySelector('.plugin-source-search-clear');
+            const debouncedSourceFilter = debounce((value) => {
+                sourceFilterState.query = value;
+                filterSourcesByType();
+                saveSourceFilterState();
+            }, 300);
+
+            // initialize value if saved
+            if (sourceFilterState.query) {
+                sourceSearchInput.value = sourceFilterState.query;
+                sourceSearchClear.style.opacity = '1';
+            } else {
+                sourceSearchClear.style.opacity = '0';
+            }
+
+            sourceSearchInput.oninput = (e) => {
+                const val = e.target.value.toLowerCase();
+                sourceSearchClear.style.opacity = val ? '1' : '0';
+                debouncedSourceFilter(val);
+            };
+            sourceSearchClear.onclick = () => {
+                sourceSearchInput.value = '';
+                sourceSearchClear.style.opacity = '0';
+                sourceFilterState.query = '';
+                filterSourcesByType();
+                saveSourceFilterState();
+            };
+
+            explorerBody.appendChild(searchArea);
+
+            // Filter label
+            const filterLabel = document.createElement('div');
+            filterLabel.className = 'plugin-source-filter-label';
+            filterLabel.textContent = 'Filter by type';
+            explorerBody.appendChild(filterLabel);
+
+            // Filter chips
+            const chipRow = document.createElement('div');
+            chipRow.className = 'plugin-source-filter-chips';
+
+            SOURCE_FILTER_CHIPS.forEach(chip => {
+                const isActive = chip.key === sourceFilterState.activeFilter;
+                const btn = document.createElement('button');
+                btn.className = 'plugin-filter-chip' + (isActive ? ' active' : '');
+                btn.dataset.filter = chip.key;
+                btn.style.setProperty('--chip-color', chip.color);
+                // Inline fallbacks to survive Angular Material button resets
+                btn.style.border = `2px solid ${chip.color}`;
+                btn.style.color = isActive ? '#fff' : chip.color;
+                btn.style.background = isActive ? chip.color : 'rgba(255,255,255,0.04)';
+                btn.style.borderRadius = '20px';
+                btn.style.padding = '8px 18px';
+                btn.style.fontWeight = '700';
+                btn.style.fontSize = '12.5px';
+                btn.style.cursor = 'pointer';
+                btn.style.letterSpacing = '0.4px';
+                btn.textContent = chip.label;
+
+                btn.onclick = () => {
+                    const wasActive = btn.classList.contains('active');
+                    // Remove active from all — also reset inline styles
+                    chipRow.querySelectorAll('.plugin-filter-chip').forEach(c => {
+                        c.classList.remove('active');
+                        const cColor = c.style.getPropertyValue('--chip-color');
+                        c.style.background = 'rgba(255,255,255,0.04)';
+                        c.style.color = cColor;
+                    });
+                    if (wasActive && chip.key !== 'all') {
+                        // Clicking active chip resets to All
+                        const allChip = chipRow.querySelector('[data-filter="all"]');
+                        allChip.classList.add('active');
+                        allChip.style.background = allChip.style.getPropertyValue('--chip-color') || '#4DD0E1';
+                        allChip.style.color = '#fff';
+                        sourceFilterState.activeFilter = 'all';
+                    } else {
+                        btn.classList.add('active');
+                        btn.style.background = chip.color;
+                        btn.style.color = '#fff';
+                        sourceFilterState.activeFilter = chip.key;
+                    }
+                    saveSourceFilterState();
+                    filterSourcesByType();
+                };
+
+                chipRow.appendChild(btn);
+            });
+
+            explorerBody.appendChild(chipRow);
+
+            // Lock View button + locked views mount
+            const lockRow = document.createElement('div');
+            lockRow.className = 'plugin-lock-view-row';
+
+            const lockBtn = document.createElement('button');
+            lockBtn.className = 'plugin-lock-view-btn';
+            // Inline fallbacks for gradient button
+            lockBtn.style.background = 'linear-gradient(135deg, #4DD0E1 0%, #AB47BC 50%, #FF7043 100%)';
+            lockBtn.style.color = '#fff';
+            lockBtn.style.border = 'none';
+            lockBtn.style.borderRadius = '24px';
+            lockBtn.style.padding = '10px 24px';
+            lockBtn.style.fontWeight = '700';
+            lockBtn.style.fontSize = '13px';
+            lockBtn.style.cursor = 'pointer';
+            lockBtn.style.letterSpacing = '0.5px';
+            lockBtn.innerHTML = `${ICONS.lock} <span>Lock View</span>`;
+            lockBtn.onclick = () => showLockViewModal();
+            lockRow.appendChild(lockBtn);
+
+            explorerBody.appendChild(lockRow);
+
+            const lockedViewsMount = document.createElement('div');
+            lockedViewsMount.id = 'plugin-locked-views-mount';
+            lockedViewsMount.className = 'plugin-locked-views';
+            lockedViewsMount.style.display = 'none';
+            explorerBody.appendChild(lockedViewsMount);
+
+            setTimeout(renderLockedViewPills, 50);
+
+            // Re-apply filter on initial render
+            setTimeout(() => {
+                if (sourceFilterState.query || sourceFilterState.activeFilter !== 'all') {
+                    filterSourcesByType();
+                }
+            }, 100);
+
+            container.appendChild(sourceExplorer);
+            // --- END SOURCE EXPLORER ---
+
             container.appendChild(taskSection);
             setTimeout(renderTasks, DOM_SETTLE_DELAY_MS);
         }
@@ -3377,20 +3861,38 @@ function processItems(context) {
                 }
 
                 const folderId = appState[context].mappings[text];
+                let proxy = null;
+
+                if (context === 'source') {
+                    const safeText = CSS.escape(text);
+                    const target = folderId ? document.getElementById(`folder-content-${folderId}`) : null;
+                    if (target) {
+                        proxy = target.querySelector(`.plugin-proxy-item[data-ref="${safeText}"]`);
+                    }
+                    if (!proxy) {
+                        proxy = createProxyItem(nativeRow, text, context, false);
+                    }
+                    nativeRow.dataset.sourceType = proxy.dataset.sourceType || 'other';
+                    nativeRow.dataset.searchTerm = proxy.dataset.searchTerm || text.toLowerCase();
+                }
+
                 if (folderId && appState[context].folders[folderId]) {
                     nativeRow.classList.add('plugin-hidden-native');
                     const target = document.getElementById(`folder-content-${folderId}`);
                     if (target) {
-                        const safeText = CSS.escape(text);
-                        let proxy = target.querySelector(`.plugin-proxy-item[data-ref="${safeText}"]`);
-
-                        if (!proxy) {
-                            proxy = createProxyItem(nativeRow, text, context, false);
+                        if (context === 'source' && proxy && proxy.parentElement !== target) {
                             target.appendChild(proxy);
+                        } else if (context === 'studio') {
+                            const safeText = CSS.escape(text);
+                            let studioProxy = target.querySelector(`.plugin-proxy-item[data-ref="${safeText}"]`);
+                            if (!studioProxy) {
+                                studioProxy = createProxyItem(nativeRow, text, context, false);
+                                target.appendChild(studioProxy);
+                            }
                         }
 
                         // --- [NEW] SYNC ITEM CHECKBOX ---
-                        if (context === 'source') {
+                        if (context === 'source' && proxy) {
                             const checkBtn = proxy.querySelector('.plugin-item-check');
                             if (checkBtn) {
                                 const targetIcon = isChecked ? ICONS.checkOn : ICONS.checkOff;
@@ -3405,6 +3907,7 @@ function processItems(context) {
                     }
                 } else {
                     nativeRow.classList.remove('plugin-hidden-native');
+                    if (proxy && proxy.parentElement) proxy.remove();
                 }
             } catch (e) {
                 console.debug('[NotebookLM FoldNest] Process item error:', e.message);
@@ -3427,6 +3930,11 @@ function processItems(context) {
 
         if (pinnedMount) pinnedMount.style.display = hasPinned ? 'block' : 'none';
         if (context === 'studio') updateSearchStats('studio');
+
+        // Re-apply source explorer filters after DOM refresh
+        if (context === 'source' && (sourceFilterState.query || sourceFilterState.activeFilter !== 'all')) {
+            setTimeout(filterSourcesByType, 50);
+        }
     } finally {
         isProcessingItems = false;
     }
@@ -3476,35 +3984,86 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
 
     let iconElement;
     if (context === 'source') {
-        const allIcons = nativeRow.querySelectorAll('mat-icon');
-        let nativeIcon = null;
-        const fileTypeIcons = ['drive_pdf', 'article', 'description', 'insert_drive_file',
-            'link', 'video_library', 'audio_file', 'image', 'folder',
-            'text_snippet', 'code', 'table_chart'];
+        let detectedType = 'other';
+        let foundIcon = null;
 
-        for (const icon of allIcons) {
-            const iconName = (icon.textContent || icon.innerText || '').trim();
-            if (iconName === 'more_vert' || iconName === 'more_horiz' ||
-                iconName === 'close' || iconName === 'check' || iconName === 'edit') {
-                continue;
-            }
-            if (fileTypeIcons.includes(iconName) || !nativeIcon) {
-                nativeIcon = icon;
-                if (fileTypeIcons.includes(iconName)) break;
+        const faviconImg = nativeRow.querySelector('img.favicon-icon');
+        const allMatIcons = Array.from(nativeRow.querySelectorAll('mat-icon'));
+
+        if (faviconImg) {
+            detectedType = 'web';
+            foundIcon = faviconImg;
+        } else {
+            // Find the most relevant mat-icon
+            const ignoredIcons = ['more_vert', 'more_horiz', 'close', 'check', 'edit'];
+            const validIcons = allMatIcons.filter(i => {
+                const t = (i.textContent || i.innerText || '').trim();
+                return t && !ignoredIcons.includes(t);
+            });
+
+            if (validIcons.length > 0) {
+                // Heuristics
+                const icon = validIcons[0]; // first valid icon
+                const iconName = (icon.textContent || icon.innerText || '').trim();
+                const cls = icon.className || '';
+
+                if (iconName === 'video_youtube' || cls.includes('youtube-icon-color')) {
+                    detectedType = 'youtube';
+                } else if (iconName === 'video_audio_call' || iconName === 'videocam' || iconName === 'movie') {
+                    detectedType = 'video';
+                } else if (iconName === 'audio_file' || iconName === 'mic') {
+                    detectedType = 'audio';
+                } else if (iconName === 'image' || iconName === 'photo') {
+                    detectedType = 'images';
+                } else if (iconName === 'article' || iconName === 'description') {
+                    detectedType = 'gdocs';
+                } else if (iconName === 'drive_pdf' || iconName === 'insert_drive_file') {
+                    detectedType = 'pdf';
+                } else if (cls.includes('icon-color') && cls.includes('google-symbols')) {
+                    // Fallback for generic google symbols if text doesn't match perfectly
+                    if (iconName.includes('video')) detectedType = 'video';
+                    else if (iconName.includes('audio')) detectedType = 'audio';
+                    else detectedType = 'gdocs';
+                } else {
+                    detectedType = SOURCE_TYPE_MAP[iconName] || 'other';
+                }
+                foundIcon = icon;
             }
         }
 
-        if (nativeIcon) {
-            const iconName = (nativeIcon.textContent || nativeIcon.innerText || '').trim();
-            if (iconName && iconName !== 'more_vert') {
+        // URL / Title extension refinement (highest priority for media)
+        const lowerText = text.toLowerCase();
+        if (lowerText.endsWith('.pdf')) {
+            detectedType = 'pdf';
+        } else if (lowerText.endsWith('.mp3') || lowerText.endsWith('.wav') || lowerText.endsWith('.m4a') || lowerText.endsWith('.ogg')) {
+            detectedType = 'audio';
+        } else if (lowerText.endsWith('.mp4') || lowerText.endsWith('.webm') || lowerText.endsWith('.mov')) {
+            detectedType = 'video';
+        } else if (lowerText.endsWith('.jpg') || lowerText.endsWith('.png') || lowerText.endsWith('.jpeg') || lowerText.endsWith('.gif')) {
+            detectedType = 'images';
+        } else if (lowerText.endsWith('.youtube') || lowerText.includes('youtube.com') || lowerText.includes('youtu.be')) {
+            detectedType = 'youtube';
+        }
+
+        proxy.dataset.sourceType = detectedType;
+
+        if (foundIcon) {
+            if (foundIcon.tagName.toLowerCase() === 'img') {
+                iconElement = foundIcon.cloneNode(true);
+                iconElement.style.marginRight = '8px';
+                iconElement.style.width = '16px';
+                iconElement.style.height = '16px';
+                iconElement.style.objectFit = 'contain';
+            } else {
+                const iconName = (foundIcon.textContent || foundIcon.innerText || '').trim();
                 let iconColor = 'var(--plugin-icon-color)';
                 try {
-                    const style = window.getComputedStyle(nativeIcon);
+                    const style = window.getComputedStyle(foundIcon);
                     if (style.color) iconColor = style.color;
                 } catch (e) { }
 
                 iconElement = document.createElement('mat-icon');
-                iconElement.className = nativeIcon.className;
+                iconElement.className = foundIcon.className;
                 iconElement.textContent = iconName;
                 iconElement.setAttribute('aria-hidden', 'true');
                 iconElement.setAttribute('data-mat-icon-type', 'font');
@@ -3515,10 +4074,6 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
                 iconElement.style.width = '20px';
                 iconElement.style.height = '20px';
                 iconElement.style.color = iconColor;
-            } else {
-                iconElement = nativeIcon.cloneNode(true);
-                iconElement.style.marginRight = '8px';
-                iconElement.style.display = 'flex';
             }
         } else {
             iconElement = document.createElement('span');
