@@ -4031,18 +4031,18 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
             }
         }
 
-        // URL / Title fallback heuristics
+        // URL / Title extension refinement (highest priority for media)
         const lowerText = text.toLowerCase();
-        if (detectedType === 'web' || detectedType === 'gdocs' || detectedType === 'other') {
-            if (lowerText.endsWith('.pdf')) {
-                detectedType = 'pdf';
-            } else if (lowerText.endsWith('.mp3') || lowerText.endsWith('.wav') || lowerText.endsWith('.m4a') || lowerText.endsWith('.ogg')) {
-                detectedType = 'audio';
-            } else if (lowerText.endsWith('.mp4') || lowerText.endsWith('.webm') || lowerText.endsWith('.mov')) {
-                detectedType = 'video';
-            } else if (lowerText.endsWith('.jpg') || lowerText.endsWith('.png') || lowerText.endsWith('.jpeg') || lowerText.endsWith('.gif')) {
-                detectedType = 'images';
-            }
+        if (lowerText.endsWith('.pdf')) {
+            detectedType = 'pdf';
+        } else if (lowerText.endsWith('.mp3') || lowerText.endsWith('.wav') || lowerText.endsWith('.m4a') || lowerText.endsWith('.ogg')) {
+            detectedType = 'audio';
+        } else if (lowerText.endsWith('.mp4') || lowerText.endsWith('.webm') || lowerText.endsWith('.mov')) {
+            detectedType = 'video';
+        } else if (lowerText.endsWith('.jpg') || lowerText.endsWith('.png') || lowerText.endsWith('.jpeg') || lowerText.endsWith('.gif')) {
+            detectedType = 'images';
+        } else if (lowerText.endsWith('.youtube') || lowerText.includes('youtube.com') || lowerText.includes('youtu.be')) {
+            detectedType = 'youtube';
         }
 
         proxy.dataset.sourceType = detectedType;
