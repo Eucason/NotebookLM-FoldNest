@@ -227,7 +227,7 @@ let activeSelectors = JSON.parse(JSON.stringify(DEFAULT_SELECTORS));
 const DEFAULT_STATE = {
     source: { folders: {}, mappings: {}, pinned: [], tasks: [], taskSections: {} },
     studio: { folders: {}, mappings: {}, pinned: [] },
-    settings: { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false }
+    settings: { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false, sourceExplorerOpen: true }
 };
 
 let appState = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -240,8 +240,28 @@ let healthCheckInterval = null;
 let lastHealthStatus = null;
 let isProcessingItems = false; // Race condition guard for processItems
 
-// --- SOURCE EXPLORER STATE (Session-Only) ---
-let sourceFilterState = { query: '', activeFilter: 'all', lockedViews: [] };
+// --- SOURCE EXPLORER STATE ---
+let sourceFilterState = { query: '', activeFilter: 'all', isLocked: false };
+try {
+    const savedFilter = localStorage.getItem('foldnest_filter_state');
+    if (savedFilter) {
+        sourceFilterState = JSON.parse(savedFilter);
+    }
+} catch (e) {
+    console.debug('[NotebookLM FoldNest] Error loading filter state', e);
+}
+
+function saveSourceFilterState() {
+    try {
+        if (sourceFilterState.isLocked) {
+            localStorage.setItem('foldnest_filter_state', JSON.stringify(sourceFilterState));
+        } else {
+            localStorage.removeItem('foldnest_filter_state');
+        }
+    } catch (e) {
+        console.debug('[NotebookLM FoldNest] Error saving filter state', e);
+    }
+}
 
 // Maps native mat-icon text content to filter category
 const SOURCE_TYPE_MAP = {
@@ -262,14 +282,14 @@ const SOURCE_TYPE_MAP = {
 };
 
 const SOURCE_FILTER_CHIPS = [
-    { key: 'all',     label: 'All',     color: '#4DD0E1', icon: 'layers' },
-    { key: 'pdf',     label: 'PDFs',    color: '#EF5350', icon: 'pdf' },
-    { key: 'gdocs',   label: 'GDocs',   color: '#42A5F5', icon: 'docs' },
-    { key: 'web',     label: 'Web',     color: '#66BB6A', icon: 'web' },
+    { key: 'all', label: 'All', color: '#4DD0E1', icon: 'layers' },
+    { key: 'pdf', label: 'PDFs', color: '#EF5350', icon: 'pdf' },
+    { key: 'gdocs', label: 'GDocs', color: '#42A5F5', icon: 'docs' },
+    { key: 'web', label: 'Web', color: '#66BB6A', icon: 'web' },
     { key: 'youtube', label: 'YouTube', color: '#FF7043', icon: 'yt' },
-    { key: 'audio',   label: 'Audio',   color: '#AB47BC', icon: 'audio' },
-    { key: 'video',   label: 'Video',   color: '#FFA726', icon: 'video' },
-    { key: 'images',  label: 'Images',  color: '#26C6DA', icon: 'img' }
+    { key: 'audio', label: 'Audio', color: '#AB47BC', icon: 'audio' },
+    { key: 'video', label: 'Video', color: '#FFA726', icon: 'video' },
+    { key: 'images', label: 'Images', color: '#26C6DA', icon: 'img' }
 ];
 
 // --- v0.9.0 DASHBOARD STATE (FoldNest) ---
@@ -805,7 +825,8 @@ function safeQueryAll(parent, selector) {
 function safeGetText(element) {
     try {
         if (!element) return '';
-        return (element.innerText || element.textContent || element.value || '').trim();
+        // Priority: aria-label (for tooltip elements), value (inputs), text/innerText
+        return (element.getAttribute('aria-label') || element.getAttribute('aria-description') || element.innerText || element.textContent || element.value || '').trim();
     } catch (e) {
         return '';
     }
@@ -1441,7 +1462,8 @@ function init() {
                 }
 
                 // Ensure all required properties exist
-                if (!appState.settings) appState.settings = { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false };
+                if (!appState.settings) appState.settings = { showGenerators: true, showResearch: true, focusMode: false, tasksOpen: true, completedOpen: false, sourceExplorerOpen: true };
+                if (appState.settings.sourceExplorerOpen === undefined) appState.settings.sourceExplorerOpen = true;
                 if (!appState.source) appState.source = { folders: {}, mappings: {}, pinned: [], tasks: [] };
                 if (!appState.studio) appState.studio = { folders: {}, mappings: {}, pinned: [] };
                 if (!appState.source.pinned) appState.source.pinned = [];
@@ -2408,11 +2430,22 @@ function filterSourcesByType() {
             container.querySelectorAll('.plugin-tree-node').forEach(el => {
                 el.style.display = '';
             });
+            // Reset native items
+            document.querySelectorAll('.plugin-detected-row').forEach(el => {
+                el.style.display = '';
+            });
             return;
         }
 
         const proxies = container.querySelectorAll('.plugin-proxy-item');
+        // Get all native rows that are NOT currently proxied (hidden)
+        const nativeRows = Array.from(document.querySelectorAll('.plugin-detected-row')).filter(r =>
+            !r.classList.contains('plugin-hidden-native') &&
+            (r.classList.contains('single-source-container') || r.querySelector('.source-title'))
+        );
+
         const matchedFolderIds = new Set();
+        let hasAnyMatch = false;
 
         proxies.forEach(proxy => {
             const sourceType = proxy.dataset.sourceType || 'other';
@@ -2424,6 +2457,7 @@ function filterSourcesByType() {
             if (typeMatch && textMatch) {
                 proxy.style.display = 'flex';
                 proxy.setAttribute('data-source-filtered', 'visible');
+                hasAnyMatch = true;
                 // Expand parent folders to show match
                 let parent = proxy.parentElement;
                 while (parent && parent !== container) {
@@ -2443,6 +2477,21 @@ function filterSourcesByType() {
             }
         });
 
+        nativeRows.forEach(native => {
+            const sourceType = native.dataset.sourceType || 'other';
+            const searchTerm = native.dataset.searchTerm || (native.innerText || '').toLowerCase();
+
+            const typeMatch = (filter === 'all') || (sourceType === filter);
+            const textMatch = !term || searchTerm.includes(term);
+
+            if (typeMatch && textMatch) {
+                native.style.display = '';
+                hasAnyMatch = true;
+            } else {
+                native.style.display = 'none';
+            }
+        });
+
         // Hide folders with no visible children (unless folder name matches)
         container.querySelectorAll('.plugin-tree-node').forEach(node => {
             if (matchedFolderIds.has(node.id)) return; // Already shown by child match
@@ -2451,6 +2500,7 @@ function filterSourcesByType() {
                 const folderName = (header.innerText || '').toLowerCase();
                 if (term && folderName.includes(term)) {
                     node.style.display = 'block';
+                    hasAnyMatch = true;
                     return;
                 }
             }
@@ -2458,6 +2508,20 @@ function filterSourcesByType() {
             const hasVisible = node.querySelector('.plugin-proxy-item[data-source-filtered="visible"]');
             node.style.display = hasVisible ? 'block' : 'none';
         });
+
+        let emptyMsg = container.querySelector('.plugin-source-empty-msg');
+        if (!hasAnyMatch && (term || filter !== 'all')) {
+            if (!emptyMsg) {
+                emptyMsg = document.createElement('div');
+                emptyMsg.className = 'plugin-source-empty-msg';
+                emptyMsg.style.cssText = 'padding: 20px; text-align: center; color: #9aa0a6; font-size: 13px; font-style: italic;';
+                emptyMsg.textContent = 'No sources match your search.';
+                container.appendChild(emptyMsg);
+            }
+            emptyMsg.style.display = 'block';
+        } else if (emptyMsg) {
+            emptyMsg.style.display = 'none';
+        }
     } catch (e) {
         console.debug('[NotebookLM FoldNest] filterSourcesByType error:', e.message);
     }
@@ -2502,12 +2566,14 @@ function showLockViewModal() {
             input.setAttribute('placeholder', 'Please enter a name');
             return;
         }
+        if (!sourceFilterState.lockedViews) sourceFilterState.lockedViews = [];
         sourceFilterState.lockedViews.push({
             name,
             query: sourceFilterState.query,
             filter: sourceFilterState.activeFilter,
             id: Date.now().toString(36)
         });
+        saveSourceFilterState();
         closeModal();
         renderLockedViewPills();
         showToast(`View "${name}" locked`);
@@ -2530,7 +2596,7 @@ function renderLockedViewPills() {
     const mount = document.getElementById('plugin-locked-views-mount');
     if (!mount) return;
 
-    if (sourceFilterState.lockedViews.length === 0) {
+    if (!sourceFilterState.lockedViews || sourceFilterState.lockedViews.length === 0) {
         mount.innerHTML = '';
         mount.style.display = 'none';
         return;
@@ -2556,6 +2622,7 @@ function renderLockedViewPills() {
         removeBtn.onclick = (e) => {
             e.stopPropagation();
             sourceFilterState.lockedViews = sourceFilterState.lockedViews.filter(v => v.id !== view.id);
+            saveSourceFilterState();
             renderLockedViewPills();
             showToast('View removed');
         };
@@ -2569,14 +2636,28 @@ function renderLockedViewPills() {
 
             // Update search input
             const searchInput = document.querySelector('#plugin-source-root .plugin-source-search input');
-            if (searchInput) searchInput.value = sourceFilterState.query;
+            if (searchInput) {
+                searchInput.value = sourceFilterState.query;
+                const clearBtn = document.querySelector('#plugin-source-root .plugin-source-search-clear');
+                if (clearBtn) clearBtn.style.opacity = sourceFilterState.query ? '1' : '0';
+            }
 
             // Update active chip
             const chips = document.querySelectorAll('#plugin-source-root .plugin-filter-chip');
             chips.forEach(c => {
-                c.classList.toggle('active', c.dataset.filter === sourceFilterState.activeFilter);
+                const isActive = c.dataset.filter === sourceFilterState.activeFilter;
+                c.classList.toggle('active', isActive);
+                const chipColor = c.style.getPropertyValue('--chip-color');
+                if (isActive) {
+                    c.style.background = chipColor;
+                    c.style.color = '#fff';
+                } else {
+                    c.style.background = 'rgba(255,255,255,0.04)';
+                    c.style.color = chipColor;
+                }
             });
 
+            saveSourceFilterState();
             filterSourcesByType();
             showToast(`View "${view.name}" applied`);
         };
@@ -3261,13 +3342,17 @@ function injectContainer(anchorEl, context) {
             `;
 
             const explorerBody = document.createElement('div');
-            explorerBody.className = 'plugin-source-explorer-body';
+            explorerBody.className = 'plugin-source-explorer-body' + (appState.settings.sourceExplorerOpen ? '' : ' collapsed');
+            if (!appState.settings.sourceExplorerOpen) explorerBody.style.display = 'none';
 
-            let explorerOpen = true;
+            explorerHeader.querySelector('.plugin-source-explorer-arrow').classList.toggle('open', appState.settings.sourceExplorerOpen);
+
             explorerHeader.onclick = () => {
-                explorerOpen = !explorerOpen;
-                explorerBody.style.display = explorerOpen ? '' : 'none';
-                explorerHeader.querySelector('.plugin-source-explorer-arrow').classList.toggle('open', explorerOpen);
+                appState.settings.sourceExplorerOpen = !appState.settings.sourceExplorerOpen;
+                saveState();
+                explorerBody.style.display = appState.settings.sourceExplorerOpen ? '' : 'none';
+                explorerBody.classList.toggle('collapsed', !appState.settings.sourceExplorerOpen);
+                explorerHeader.querySelector('.plugin-source-explorer-arrow').classList.toggle('open', appState.settings.sourceExplorerOpen);
             };
 
             sourceExplorer.appendChild(explorerHeader);
@@ -3288,7 +3373,16 @@ function injectContainer(anchorEl, context) {
             const debouncedSourceFilter = debounce((value) => {
                 sourceFilterState.query = value;
                 filterSourcesByType();
+                saveSourceFilterState();
             }, 300);
+
+            // initialize value if saved
+            if (sourceFilterState.query) {
+                sourceSearchInput.value = sourceFilterState.query;
+                sourceSearchClear.style.opacity = '1';
+            } else {
+                sourceSearchClear.style.opacity = '0';
+            }
 
             sourceSearchInput.oninput = (e) => {
                 const val = e.target.value.toLowerCase();
@@ -3300,6 +3394,7 @@ function injectContainer(anchorEl, context) {
                 sourceSearchClear.style.opacity = '0';
                 sourceFilterState.query = '';
                 filterSourcesByType();
+                saveSourceFilterState();
             };
 
             explorerBody.appendChild(searchArea);
@@ -3315,14 +3410,15 @@ function injectContainer(anchorEl, context) {
             chipRow.className = 'plugin-source-filter-chips';
 
             SOURCE_FILTER_CHIPS.forEach(chip => {
+                const isActive = chip.key === sourceFilterState.activeFilter;
                 const btn = document.createElement('button');
-                btn.className = 'plugin-filter-chip' + (chip.key === 'all' ? ' active' : '');
+                btn.className = 'plugin-filter-chip' + (isActive ? ' active' : '');
                 btn.dataset.filter = chip.key;
                 btn.style.setProperty('--chip-color', chip.color);
                 // Inline fallbacks to survive Angular Material button resets
                 btn.style.border = `2px solid ${chip.color}`;
-                btn.style.color = chip.key === 'all' ? '#fff' : chip.color;
-                btn.style.background = chip.key === 'all' ? chip.color : 'rgba(255,255,255,0.04)';
+                btn.style.color = isActive ? '#fff' : chip.color;
+                btn.style.background = isActive ? chip.color : 'rgba(255,255,255,0.04)';
                 btn.style.borderRadius = '20px';
                 btn.style.padding = '8px 18px';
                 btn.style.fontWeight = '700';
@@ -3353,6 +3449,7 @@ function injectContainer(anchorEl, context) {
                         btn.style.color = '#fff';
                         sourceFilterState.activeFilter = chip.key;
                     }
+                    saveSourceFilterState();
                     filterSourcesByType();
                 };
 
@@ -3388,6 +3485,15 @@ function injectContainer(anchorEl, context) {
             lockedViewsMount.className = 'plugin-locked-views';
             lockedViewsMount.style.display = 'none';
             explorerBody.appendChild(lockedViewsMount);
+
+            setTimeout(renderLockedViewPills, 50);
+
+            // Re-apply filter on initial render
+            setTimeout(() => {
+                if (sourceFilterState.query || sourceFilterState.activeFilter !== 'all') {
+                    filterSourcesByType();
+                }
+            }, 100);
 
             container.appendChild(sourceExplorer);
             // --- END SOURCE EXPLORER ---
@@ -3755,20 +3861,38 @@ function processItems(context) {
                 }
 
                 const folderId = appState[context].mappings[text];
+                let proxy = null;
+
+                if (context === 'source') {
+                    const safeText = CSS.escape(text);
+                    const target = folderId ? document.getElementById(`folder-content-${folderId}`) : null;
+                    if (target) {
+                        proxy = target.querySelector(`.plugin-proxy-item[data-ref="${safeText}"]`);
+                    }
+                    if (!proxy) {
+                        proxy = createProxyItem(nativeRow, text, context, false);
+                    }
+                    nativeRow.dataset.sourceType = proxy.dataset.sourceType || 'other';
+                    nativeRow.dataset.searchTerm = proxy.dataset.searchTerm || text.toLowerCase();
+                }
+
                 if (folderId && appState[context].folders[folderId]) {
                     nativeRow.classList.add('plugin-hidden-native');
                     const target = document.getElementById(`folder-content-${folderId}`);
                     if (target) {
-                        const safeText = CSS.escape(text);
-                        let proxy = target.querySelector(`.plugin-proxy-item[data-ref="${safeText}"]`);
-
-                        if (!proxy) {
-                            proxy = createProxyItem(nativeRow, text, context, false);
+                        if (context === 'source' && proxy && proxy.parentElement !== target) {
                             target.appendChild(proxy);
+                        } else if (context === 'studio') {
+                            const safeText = CSS.escape(text);
+                            let studioProxy = target.querySelector(`.plugin-proxy-item[data-ref="${safeText}"]`);
+                            if (!studioProxy) {
+                                studioProxy = createProxyItem(nativeRow, text, context, false);
+                                target.appendChild(studioProxy);
+                            }
                         }
 
                         // --- [NEW] SYNC ITEM CHECKBOX ---
-                        if (context === 'source') {
+                        if (context === 'source' && proxy) {
                             const checkBtn = proxy.querySelector('.plugin-item-check');
                             if (checkBtn) {
                                 const targetIcon = isChecked ? ICONS.checkOn : ICONS.checkOff;
@@ -3783,6 +3907,7 @@ function processItems(context) {
                     }
                 } else {
                     nativeRow.classList.remove('plugin-hidden-native');
+                    if (proxy && proxy.parentElement) proxy.remove();
                 }
             } catch (e) {
                 console.debug('[NotebookLM FoldNest] Process item error:', e.message);
@@ -3859,37 +3984,86 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
 
     let iconElement;
     if (context === 'source') {
-        const allIcons = nativeRow.querySelectorAll('mat-icon');
-        let nativeIcon = null;
-        const fileTypeIcons = ['drive_pdf', 'article', 'description', 'insert_drive_file',
-            'link', 'video_library', 'audio_file', 'image', 'folder',
-            'text_snippet', 'code', 'table_chart'];
+        let detectedType = 'other';
+        let foundIcon = null;
 
-        for (const icon of allIcons) {
-            const iconName = (icon.textContent || icon.innerText || '').trim();
-            if (iconName === 'more_vert' || iconName === 'more_horiz' ||
-                iconName === 'close' || iconName === 'check' || iconName === 'edit') {
-                continue;
-            }
-            if (fileTypeIcons.includes(iconName) || !nativeIcon) {
-                nativeIcon = icon;
-                if (fileTypeIcons.includes(iconName)) break;
+        const faviconImg = nativeRow.querySelector('img.favicon-icon');
+        const allMatIcons = Array.from(nativeRow.querySelectorAll('mat-icon'));
+
+        if (faviconImg) {
+            detectedType = 'web';
+            foundIcon = faviconImg;
+        } else {
+            // Find the most relevant mat-icon
+            const ignoredIcons = ['more_vert', 'more_horiz', 'close', 'check', 'edit'];
+            const validIcons = allMatIcons.filter(i => {
+                const t = (i.textContent || i.innerText || '').trim();
+                return t && !ignoredIcons.includes(t);
+            });
+
+            if (validIcons.length > 0) {
+                // Heuristics
+                const icon = validIcons[0]; // first valid icon
+                const iconName = (icon.textContent || icon.innerText || '').trim();
+                const cls = icon.className || '';
+
+                if (iconName === 'video_youtube' || cls.includes('youtube-icon-color')) {
+                    detectedType = 'youtube';
+                } else if (iconName === 'video_audio_call' || iconName === 'videocam' || iconName === 'movie') {
+                    detectedType = 'video';
+                } else if (iconName === 'audio_file' || iconName === 'mic') {
+                    detectedType = 'audio';
+                } else if (iconName === 'image' || iconName === 'photo') {
+                    detectedType = 'images';
+                } else if (iconName === 'article' || iconName === 'description') {
+                    detectedType = 'gdocs';
+                } else if (iconName === 'drive_pdf' || iconName === 'insert_drive_file') {
+                    detectedType = 'pdf';
+                } else if (cls.includes('icon-color') && cls.includes('google-symbols')) {
+                    // Fallback for generic google symbols if text doesn't match perfectly
+                    if (iconName.includes('video')) detectedType = 'video';
+                    else if (iconName.includes('audio')) detectedType = 'audio';
+                    else detectedType = 'gdocs';
+                } else {
+                    detectedType = SOURCE_TYPE_MAP[iconName] || 'other';
+                }
+                foundIcon = icon;
             }
         }
 
-        if (nativeIcon) {
-            const iconName = (nativeIcon.textContent || nativeIcon.innerText || '').trim();
-            // Set source type for filtering
-            proxy.dataset.sourceType = SOURCE_TYPE_MAP[iconName] || 'other';
-            if (iconName && iconName !== 'more_vert') {
+        // URL / Title fallback heuristics
+        const lowerText = text.toLowerCase();
+        if (detectedType === 'web' || detectedType === 'gdocs' || detectedType === 'other') {
+            if (lowerText.endsWith('.pdf')) {
+                detectedType = 'pdf';
+            } else if (lowerText.endsWith('.mp3') || lowerText.endsWith('.wav') || lowerText.endsWith('.m4a') || lowerText.endsWith('.ogg')) {
+                detectedType = 'audio';
+            } else if (lowerText.endsWith('.mp4') || lowerText.endsWith('.webm') || lowerText.endsWith('.mov')) {
+                detectedType = 'video';
+            } else if (lowerText.endsWith('.jpg') || lowerText.endsWith('.png') || lowerText.endsWith('.jpeg') || lowerText.endsWith('.gif')) {
+                detectedType = 'images';
+            }
+        }
+
+        proxy.dataset.sourceType = detectedType;
+
+        if (foundIcon) {
+            if (foundIcon.tagName.toLowerCase() === 'img') {
+                iconElement = foundIcon.cloneNode(true);
+                iconElement.style.marginRight = '8px';
+                iconElement.style.width = '16px';
+                iconElement.style.height = '16px';
+                iconElement.style.objectFit = 'contain';
+            } else {
+                const iconName = (foundIcon.textContent || foundIcon.innerText || '').trim();
                 let iconColor = 'var(--plugin-icon-color)';
                 try {
-                    const style = window.getComputedStyle(nativeIcon);
+                    const style = window.getComputedStyle(foundIcon);
                     if (style.color) iconColor = style.color;
                 } catch (e) { }
 
                 iconElement = document.createElement('mat-icon');
-                iconElement.className = nativeIcon.className;
+                iconElement.className = foundIcon.className;
                 iconElement.textContent = iconName;
                 iconElement.setAttribute('aria-hidden', 'true');
                 iconElement.setAttribute('data-mat-icon-type', 'font');
@@ -3900,16 +4074,11 @@ function createProxyItem(nativeRow, text, context, isPinnedView) {
                 iconElement.style.width = '20px';
                 iconElement.style.height = '20px';
                 iconElement.style.color = iconColor;
-            } else {
-                iconElement = nativeIcon.cloneNode(true);
-                iconElement.style.marginRight = '8px';
-                iconElement.style.display = 'flex';
             }
         } else {
             iconElement = document.createElement('span');
             iconElement.innerText = '📄';
             iconElement.style.marginRight = '8px';
-            proxy.dataset.sourceType = 'other';
         }
     } else {
         // Studio panel: Find and clone the artifact icon
