@@ -10,7 +10,8 @@
     "scripting",
     "storage",
     "unlimitedStorage",
-    "identity"
+    "identity",
+    "downloads"
   ],
   "host_permissions": [
     "https://notebooklm.google.com/*",
@@ -38,6 +39,8 @@
       ],
       "js": [
         "lz-string_min.js",
+        "html2canvas.min.js",
+        "export.js",
         "sync.js",
         "content.js",
         "note-popout.js"

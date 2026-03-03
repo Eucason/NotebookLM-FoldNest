@@ -1569,6 +1569,11 @@ function startApp() {
                 }
             } catch (err) { }
         });
+
+        // Initialize export module (Phase 1: Artifacts)
+        if (window.FoldNestExport) {
+            setTimeout(() => window.FoldNestExport.init(), INIT_DELAY_MS + 200);
+        }
     } catch (e) {
         console.error('[NotebookLM FoldNest] startApp failed:', e);
     }
