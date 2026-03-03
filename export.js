@@ -474,7 +474,9 @@
 
       row.append(cbWrap, label);
       row.onclick = (e) => {
-        if (e.target === input) return;
+        // cbWrap is a <label> — browser natively toggles input when anything inside it is clicked.
+        // Skip the manual toggle for label area clicks to prevent double-toggling.
+        if (cbWrap.contains(e.target)) return;
         input.checked = !input.checked;
         onChange(idx, input.checked);
       };
