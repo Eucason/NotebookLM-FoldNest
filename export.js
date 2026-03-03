@@ -260,12 +260,11 @@
     // Divider
     flashSection.appendChild(adMakeDivider());
 
-    // Item list
-    const flashcards = scrapeFlashcards();
+    // Item list — from artifact library DOM
+    const flashArtifacts = adScrapeArtifactLibrary('flashcard');
+    const flashNames = flashArtifacts.map(a => a.title);
     const flashList = adMakeList(
-      flashcards.length > 0
-        ? flashcards.map((c, i) => `Flashcard ${i + 1}: ${c.front.substring(0, 36)}${c.front.length > 36 ? '…' : ''}`)
-        : null,
+      flashNames.length > 0 ? flashNames : null,
       'No flashcards yet',
       (idx, checked) => {
         if (checked) state.selectedFlashcards.add(idx);
@@ -273,7 +272,7 @@
       }
     );
     // Pre-select all
-    flashcards.forEach((_, i) => state.selectedFlashcards.add(i));
+    flashArtifacts.forEach((_, i) => state.selectedFlashcards.add(i));
     flashSection.appendChild(flashList);
 
     menu.appendChild(flashSection);
@@ -300,18 +299,19 @@
 
     mindSection.appendChild(adMakeDivider());
 
-    // Detect mind map presence
-    const mindMapEl = adFindMindMapEl();
-    const mindItems = mindMapEl ? ['Current Mind Map'] : null;
+    // Detect mind maps from artifact library
+    const mindArtifacts = adScrapeArtifactLibrary('mindmap');
+    const mindNames = mindArtifacts.map(a => a.title);
     const mindList = adMakeList(
-      mindItems,
+      mindNames.length > 0 ? mindNames : null,
       'No mind maps yet',
       (idx, checked) => {
         if (checked) state.selectedMindmaps.add(idx);
         else state.selectedMindmaps.delete(idx);
       }
     );
-    if (mindMapEl) state.selectedMindmaps.add(0);
+    // Pre-select all
+    mindArtifacts.forEach((_, i) => state.selectedMindmaps.add(i));
     mindSection.appendChild(mindList);
 
     menu.appendChild(mindSection);
@@ -485,7 +485,76 @@
     return list;
   }
 
+  /**
+   * Scrape the Studio artifact library for items of a given type.
+   * Uses the confirmed live DOM structure:
+   *   button.artifact-button-content (each artifact row)
+   *   mat-icon inside it — text content = icon ligature name
+   *     'cards_star' → flashcard
+   *     'flowchart'  → mind map
+   *   span.artifact-title (or div.title-container) — the artifact name
+   *
+   * @param {'flashcard'|'mindmap'} type
+   * @returns {Array<{title: string, el: Element}>}
+   */
+  function adScrapeArtifactLibrary(type) {
+    const iconName = type === 'flashcard' ? 'cards_star' : 'flowchart';
+    const results = [];
+
+    // Primary: query all artifact button rows in the library
+    // These live inside [class*='artifact-library'] or the panel-content-scrollable area
+    const rows = document.querySelectorAll(
+      'button.artifact-button-content, .artifact-item-button button, [class*="artifact-library"] button'
+    );
+
+    rows.forEach(btn => {
+      // Find the mat-icon inside this button
+      const icon = btn.querySelector('mat-icon');
+      if (!icon) return;
+      const iconText = (icon.textContent || '').trim();
+      if (iconText !== iconName) return;
+
+      // Get the artifact title
+      let title = '';
+      const titleEl = btn.querySelector('span.artifact-title, .artifact-title, div.title-container, [class*="title"]');
+      if (titleEl) {
+        title = (titleEl.textContent || '').trim();
+      } else {
+        // Fallback: use all text except the icon text
+        title = (btn.textContent || '').replace(iconText, '').trim();
+      }
+
+      if (title) {
+        results.push({ title, el: btn });
+        log(`[adScrapeArtifactLibrary] Found ${type}: "${title}"`);
+      }
+    });
+
+    // Fallback: look for treeitem / listitem with matching icon
+    if (results.length === 0) {
+      const treeItems = document.querySelectorAll(
+        '[role="treeitem"], [role="listitem"], mat-tree-node'
+      );
+      treeItems.forEach(item => {
+        const icon = item.querySelector('mat-icon');
+        if (!icon) return;
+        if ((icon.textContent || '').trim() !== iconName) return;
+        const titleEl = item.querySelector('span.artifact-title, [class*="title"], span');
+        const title = titleEl ? (titleEl.textContent || '').trim() : (item.textContent || '').replace(iconName, '').trim();
+        if (title) results.push({ title, el: item });
+      });
+    }
+
+    log(`[adScrapeArtifactLibrary] ${type} count: ${results.length}`);
+    return results;
+  }
+
   function adFindMindMapEl() {
+    // First check the library for a mind map item
+    const mindmaps = adScrapeArtifactLibrary('mindmap');
+    if (mindmaps.length > 0) return mindmaps[0].el;
+
+    // Fallback to rendered content selectors
     const selectors = [
       '[data-artifact-type*="mind"]',
       '[data-artifact-type*="mindmap"]',
