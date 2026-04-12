@@ -64,7 +64,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
-    // Revoke auth token
     if (request.action === "revokeAuthToken") {
         (async () => {
             try {
@@ -79,6 +78,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 sendResponse({ success: false, error: error.message });
             }
         })();
+        return true;
+    }
+
+    if (request.action === "downloadUrl") {
+        chrome.downloads.download({ url: request.url, filename: request.filename });
+        sendResponse({ success: true });
         return true;
     }
 });

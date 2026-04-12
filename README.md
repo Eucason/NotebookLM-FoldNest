@@ -33,29 +33,25 @@ This extension operates by interacting with NotebookLM's web interface. If Googl
 
 **Developer Note**: I am a Medicine & Surgery student, not a professional software developer. This tool was built to solve my own organizational challenges with NotebookLM and is shared freely with the community.
 
-**Current Version**: v0.9.3 - Stable for personal use, but may contain edge cases not encountered in my workflow.
+**Current Version**: v1.0.0 - Stable release with Studio Artifact Export.
 
 **Support**: Bug reports and feature requests are welcome via GitHub Issues. Response times may vary based on academic commitments.
 
 ---
 
-## 🚀 What's New in v0.9.3
+## 🚀 What's New in v1.0.0
 
-### Dashboard Organization System
-- **Folder Hierarchy**: Create nested folder structures to organize your notebooks on the dashboard
-- **Grid & List View Support**: Full integration with both NotebookLM view modes
-- **Smart Hiding**: Notebooks assigned to folders are automatically hidden from the main grid to reduce clutter
-- **Visual Theming**: Color-code folders for instant visual categorization
+### Studio Artifact Export (Major)
+- **Multi-Format Downloads**: Export generated artifacts (Flashcards, Reports, Slide Decks, etc.) in CSV, DOCX, PDF, PPTX, XLSX, and WAV formats.
+- **Intelligent Type Detection**: "Haystack" classification engine uses titles, icons, and content to automatically categorize NotebookLM artifacts.
+- **ZIP Packaging**: Bundle multiple artifacts into a single organized ZIP file with automatic subfolder categorization.
+- **Native Media Trigger**: Direct browser download support for Audio and Video overview files.
+- **Format Memory**: The extension remembers your preferred export format for each artifact category.
+- **Progress Tracking**: Real-time progress toasts with live status updates during multi-file exports.
 
-### Enhanced Stability
-- **Graceful Degradation**: Individual features disable themselves if errors occur, preventing total extension failure
-- **Improved DOM Observers**: More resilient to Google's interface changes
-- **Cloud Sync** (Optional): Cross-device synchronization via Google Drive AppData
-
-### UI Improvements
-- **Collapsible Sidebar**: Resizable sidebar with smooth animations and proper content reflow
-- **Responsive Design**: Optimized for both desktop and mobile viewports
-- **Dark Mode Support**: Seamless integration with NotebookLM's theme switching
+### Dashboard & Navigation
+- **Optimized DOM Injection**: More resilient anchoring system for injection into NotebookLM's dynamic SPA interface.
+- **Improved Performance**: Reduced footprint and faster rendering for large folder structures.
 
 ---
 
@@ -132,6 +128,32 @@ The Dashboard View provides notebook-level organization across your entire Noteb
   - Visual feedback: idle (gray), syncing (blue), success (green), error (red)
   - Error messages for authentication failures
   - Sync menu with "Enable/Disable Sync" and "Sync Now" options
+
+---
+
+### Studio Export Features
+
+The Studio Export module provides high-fidelity extraction and conversion of NotebookLM's generated "artifacts".
+
+#### Artifact Extraction
+- **Automatic Discovery**: Scans the Studio panel for all rendered tiles and cards.
+- **Haystack Classification**: Multi-vector detection of artifact types based on:
+  - Material symbols and native icon classes.
+  - Title keywords and description metadata.
+  - Content snippets and structural patterns.
+
+#### Format Conversion Engine
+- **Reports & Summaries**: MD → **DOCX**, MD → **PDF**.
+- **Slide Decks**: MD/HTML → **PPTX**, MD/HTML → **PDF**.
+- **Data & Tables**: JSON/Table → **XLSX**, JSON/Table → **CSV**.
+- **Flashcards**: Q&A Pairs → **CSV (Anki-ready)**, Q&A Pairs → **TXT**.
+- **Media**: Programmatic trigger for native **WAV** downloads.
+
+#### Batch & UX
+- **ZIP Bundling**: Organizes artifacts into named folders (e.g., `/Flashcards`, `/Reports`) within a single ZIP file.
+- **JSZip Integration**: Efficient client-side compression for multiple selections.
+- **Progress UI**: Non-intrusive floating toasts show real-time export status (e.g., "Downloading... (2/5)").
+- **Select All/Indeterminate**: Master checkbox for rapid selection of multiple artifacts.
 
 ---
 
@@ -437,9 +459,29 @@ The Notebook View operates within individual notebooks, providing granular organ
    - Fuzzy matching finds partial/misspelled terms
 
 3. **Manage Index**:
-   - View stats: Shows indexed note count and storage used
-   - Rebuild index: Settings menu → "Rebuild Search Index"
-   - Clear index: Rebuild function clears and re-indexes on note opens
+  - View stats: Shows indexed note count and storage used
+  - Rebuild index: Settings menu → "Rebuild Search Index"
+  - Clear index: Rebuild function clears and re-indexes on note opens
+
+### Studio Artifact Export Workflow
+
+1. **Open Studio Panel**:
+   - Ensure you are in a Notebook with generated artifacts.
+   - Look for the colorful **DOWNLOAD** button in the Studio header (top right).
+
+2. **Select Artifacts**:
+   - Click **DOWNLOAD** to open the selection modal.
+   - Use checkboxes to select items or "Select All".
+   - Choose preferred formats using the toggle chips (e.g., PPTX for slides, DOCX for reports).
+
+3. **Batch Export**:
+   - Click "Download Selected".
+   - If multiple items are selected, you'll receive a organized ZIP file.
+   - For Media artifacts, the extension will programmatically trigger the native download flow.
+
+4. **Monitor Progress**:
+   - Follow the progress toast at the bottom of the screen.
+   - Wait for "Download complete ✓" before closing the tab.
 
 ---
 
@@ -531,6 +573,24 @@ featureStatus = {
 - Content truncation: Max 20,000 characters per note
 - LZ-String compression: ~50-70% size reduction
 
+### Artifact Export Engine (`export-studio.js`)
+
+**Type Detection (Haystack Method)**:
+- Scans artifact tiles for combinations of keywords, icons, and ARIA labels.
+- Prevents false positives by filtering out UI elements (like "more_vert" or "shared").
+
+**Conversion Architecture**:
+- **XML-Based DOCX**: Generates Word documents using lightweight internal XML templates to avoid library overhead.
+- **Iframe Print Injection**: Programmatically creates hidden iframes to leverage browser print-to-PDF drivers.
+- **Library Integration**:
+  - **JSZip**: Handles client-side bundling of multiple blobs.
+  - **PptxGenJS**: Generates slide decks from extracted markdown.
+  - **SheetJS**: Powers XLSX conversion for data tables.
+
+**Native Proxy Trigger**:
+- For media files, the extension programmatically interacts with the artifact's context menu.
+- Bypasses CORS restrictions that prevent direct blob fetching of large media files.
+
 ---
 
 ## 🔐 Privacy & Security
@@ -556,6 +616,7 @@ featureStatus = {
 | `storage` | Save folder/task data to local storage |
 | `unlimitedStorage` | Remove 5MB quota limit for search indices |
 | `identity` | OAuth authentication for optional Cloud Sync |
+| `downloads` | Trigger file saves and ZIP exports |
 | `host_permissions` (notebooklm.google.com) | Access NotebookLM pages |
 | `host_permissions` (gist.githubusercontent.com) | Fetch remote selector config |
 | `host_permissions` (googleapis.com) | Google Drive API for Cloud Sync |
@@ -699,6 +760,6 @@ Use at your own risk. The developer assumes no liability for data loss, service 
 
 ---
 
-**Version**: 0.9.3  
-**Last Updated**: 2026 
-**Status**: Active Development (Academic Schedule Dependent)
+**Version**: 1.0.0  
+**Last Updated**: April 2026 
+**Status**: Stable Release (Studio Export Update)

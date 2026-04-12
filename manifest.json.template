@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NotebookLM FoldNest",
-  "version": "0.9.3",
+  "version": "1.0.0",
   "description": "Tree-structured folder organization for NotebookLM notebooks and dashboard with Optimized Local Storage and optional Cloud Sync.",
   "author": "Eucason",
   "key": "YOUR_PUBLIC_KEY_HERE",
@@ -10,7 +10,14 @@
     "scripting",
     "storage",
     "unlimitedStorage",
-    "identity"
+    "identity",
+    "downloads"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/jszip.min.js", "lib/pptxgenjs.min.js"],
+      "matches": ["https://notebooklm.google.com/*"]
+    }
   ],
   "host_permissions": [
     "https://notebooklm.google.com/*",
@@ -40,7 +47,8 @@
         "lz-string_min.js",
         "sync.js",
         "content.js",
-        "note-popout.js"
+        "note-popout.js",
+        "Export/studio/export-studio.js"
       ],
       "css": [
         "styles.css"
