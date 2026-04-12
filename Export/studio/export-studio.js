@@ -364,7 +364,7 @@
             console.debug(`${MODULE_TAG} Opening Export Dropdown...`);
 
             // Scan artifacts and render the card content
-            const artifacts = _scanStudioArtifacts();
+            let artifacts = _scanStudioArtifacts();
             console.debug(`${MODULE_TAG} Scanned ${artifacts.length} artifacts`);
 
             // Clear old content and rebuild
@@ -643,7 +643,7 @@
             }));
             if (selected.length === 0) return;
             _closeExportModal();
-            _handleDownload(selected);
+            bulkDownloadArtifacts(selected);
         });
 
         return card;
@@ -774,6 +774,86 @@
     }
 
     /**
+     * Phase 2 (Deep Structure): The "Leaky" ID Extractor
+     * Extracts NotebookLM artifact metadata via deep DOM querying.
+     */
+    function _inventoryAllArtifacts() {
+        const results = [];
+
+        try {
+            // 1. Query all elements
+            const selectors = 'artifact-library-note, artifact-library-item';
+            const allTiles = Array.from(document.querySelectorAll(selectors));
+            
+            // 3. Filter visible tiles
+            const visibleTiles = allTiles.filter(tile => {
+                const style = window.getComputedStyle(tile);
+                return style.display !== 'none';
+            });
+
+            // 2. Extract Metadata per Tile
+            for (const tile of visibleTiles) {
+                try {
+                    let title = 'Unknown Title';
+                    let artifactId = null;
+                    let type = 'UNKNOWN';
+                    let details = '';
+
+                    // a. Extract title
+                    const titleEl = tile.querySelector('.artifact-title');
+                    if (titleEl && titleEl.textContent) {
+                        title = titleEl.textContent.trim();
+                    }
+
+                    // b. Extract UUID
+                    const labelsEl = tile.querySelector('.artifact-labels');
+                    if (labelsEl && labelsEl.id) {
+                        const uuidRegex = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+                        const match = labelsEl.id.match(uuidRegex);
+                        if (match) {
+                            artifactId = match[1];
+                        }
+                    }
+
+                    // c. Extract type
+                    const buttonEl = tile.querySelector('button[aria-description]');
+                    if (buttonEl) {
+                        type = buttonEl.getAttribute('aria-description');
+                    }
+
+                    // d. Extract details
+                    const detailsEl = tile.querySelector('.artifact-details');
+                    if (detailsEl && detailsEl.textContent) {
+                        details = detailsEl.textContent.trim();
+                    }
+
+                    // 4. Return array format
+                    results.push({ title, type, artifactId, details, element: tile });
+
+                } catch (tileError) {
+                    console.error('[FoldNest Inventory] Error parsing tile:', tileError, tile);
+                }
+            }
+            console.debug(`[FoldNest] Inventory complete: ${results.length} artifacts found`);
+        } catch (globalError) {
+            console.error('[FoldNest Inventory] Fatal error:', globalError);
+        }
+
+        return results;
+    }
+
+    // Assign window helper
+    window._fnInventory = () => {
+        const results = _inventoryAllArtifacts();
+        console.table(results.map(a => ({
+            title: a.title,
+            type: a.type,
+            artifactId: a.artifactId
+        })));
+        return results;
+    };
+
+    /**
      * Detects the type of an artifact from its DOM element using the "Haystack" method.
      * Searches title, icon, description, and details for identifying keywords.
      */
@@ -839,84 +919,121 @@
     // =========================================================================
 
     /**
-     * Orchestrates the export.
-     * Single selection → direct download.
-     * Multiple selections → ZIP file.
+     * Master Orchestrator: Bulk Download Artifacts
+     * Handles zipping Blob files and queuing external native downloads.
      */
-    async function _handleDownload(selectedArtifacts) {
+    async function bulkDownloadArtifacts(selectedArtifacts) {
         const total = selectedArtifacts.length;
-        const notebookTitle = _getNotebookTitle();
-
-        _showProgressToast('Preparing download…', 0, total);
+        _updateProgressToast(`Preparing download…`, 0, total);
 
         try {
-            if (total === 1) {
-                // Direct download
-                const artifact = selectedArtifacts[0];
-                const result = await _convertArtifact(artifact, artifact.selectedFormat, notebookTitle);
-                if (result) {
-                    if (result.blob) {
-                        _triggerDownload(result.blob, result.filename);
-                    } else if (result.external) {
-                        console.debug(`${MODULE_TAG} External download triggered for ${result.filename}`);
-                    }
-                    _updateProgressToast(`Download complete ✓`, total, total, true);
-                } else {
-                    _updateProgressToast('Download failed — see console for details', total, total, true);
-                }
-            } else {
-                // ZIP packaging
-                const JSZip = await _loadJSZip();
-                if (!JSZip) {
-                    _showFallbackToast(`JSZip not available — downloading files individually`);
-                    // Fallback: download individually
-                    let done = 0;
-                    for (const artifact of selectedArtifacts) {
-                        const result = await _convertArtifact(artifact, artifact.selectedFormat, notebookTitle);
-                        if (result && result.blob) {
-                            _triggerDownload(result.blob, result.filename);
-                        } else if (result && result.external) {
-                            console.debug(`${MODULE_TAG} External download triggered for ${result.filename}`);
-                        }
-                        done++;
-                        _updateProgressToast(`Downloading… (${done}/${total})`, done, total);
-                    }
-                    _updateProgressToast(`All downloads triggered ✓`, total, total, true);
-                    return;
-                }
+            // 1. Initialize JSZip (or fallback to null)
+            const JSZipObj = typeof JSZip !== 'undefined' ? JSZip : (await _loadJSZip());
+            const zip = JSZipObj ? new JSZipObj() : null;
+            
+            if (!zip) {
+                console.warn(`${MODULE_TAG} JSZip is missing. Falling back to sequential individual downloads.`);
+                const api = window.NotebookLMFoldNest;
+                if (api && api.showToast) api.showToast('JSZip missing — downloading files individually');
+            }
 
-                const zip = new JSZip();
-                let done = 0;
+            // 2. Separate into two phases
+            const externalQueue = [];
+            let completedBlobs = 0;
 
-                await Promise.all(
-                    selectedArtifacts.map(async (artifact) => {
+            // 4. Concurrency pool for _convertArtifact
+            const processBatch = async (items, concurrencyLimit) => {
+                const results = [];
+                const executing = new Set();
+
+                for (const item of items) {
+                    const p = Promise.resolve().then(async () => {
                         try {
-                            const result = await _convertArtifact(artifact, artifact.selectedFormat, notebookTitle);
-                            if (result) {
-                                const config = ARTIFACT_CONFIG[artifact.type] || ARTIFACT_CONFIG.unknown;
-                                if (result.blob) {
-                                    zip.folder(config.folderName).file(result.filename, result.blob);
-                                } else if (result.external) {
-                                    // Add a placeholder/note in the ZIP for media files triggered separately
-                                    const note = `The media file "${result.filename}" has been downloaded directly to your browser's downloads folder because it could not be bundled into this ZIP file due to security/CORS restrictions.`;
-                                    zip.folder(config.folderName).file(`${result.filename}.NOTE.txt`, note);
+                            // 3. Call soon-to-be-refactored _convertArtifact(tile)
+                            const result = await _convertArtifact(item);
+                            if (!result) return;
+
+                            if (result.external) {
+                                // 5. Add to external queue
+                                externalQueue.push({ item, result });
+                            } else {
+                                // 4. Add Blob/Text to JSZip
+                                const content = result.blob || result.data || result;
+                                const filename = result.filename || `artifact-${Date.now()}.txt`;
+                                const folderName = item.type && ARTIFACT_CONFIG[item.type] ? ARTIFACT_CONFIG[item.type].folderName : '';
+
+                                if (zip) {
+                                    if (folderName) {
+                                        zip.folder(folderName).file(filename, content);
+                                    } else {
+                                        zip.file(filename, content);
+                                    }
+                                } else {
+                                    // NO ZIP FALLBACK: Push to external sequential queue
+                                    externalQueue.push({ 
+                                        item, 
+                                        result: { 
+                                            trigger: () => _triggerDownload(content instanceof Blob ? content : new Blob([content]), filename)
+                                        } 
+                                    });
                                 }
                             }
-                        } catch (e) {
-                            console.error(`${MODULE_TAG} ZIP packaging error for ${artifact.title}:`, e);
+                        } catch (err) {
+                            console.error(`${MODULE_TAG} Error processing tile:`, err);
                         } finally {
-                            done++;
-                            _updateProgressToast(`Downloading… (${done}/${total})`, done, total);
+                            completedBlobs++;
+                            _updateProgressToast(`Processing files… (${completedBlobs}/${total})`, completedBlobs, total);
                         }
-                    })
-                );
+                    });
 
-                const zipBlob = await zip.generateAsync({ type: 'blob' });
-                _triggerDownload(zipBlob, `${notebookTitle} Studio Export.zip`);
-                _updateProgressToast(`Download complete ✓`, total, total, true);
+                    results.push(p);
+                    executing.add(p);
+                    const clean = p.finally(() => executing.delete(p));
+
+                    if (executing.size >= concurrencyLimit) {
+                        await Promise.race(executing);
+                    }
+                }
+                return Promise.all(results);
+            };
+
+            // Process blobs with max 3 concurrency
+            await processBatch(selectedArtifacts, 3);
+
+            // 6. Generate ZIP and trigger
+            if (zip) {
+                let hasZipFiles = false;
+                zip.forEach(() => { hasZipFiles = true; });
+
+                if (hasZipFiles) {
+                    _updateProgressToast(`Generating ZIP file…`, completedBlobs, total);
+                    const zipBlob = await zip.generateAsync({ type: 'blob' });
+                    _triggerDownload(zipBlob, 'NotebookLM_Export.zip');
+                }
             }
+
+            // 7. Process external queue sequentially with delay
+            if (externalQueue.length > 0) {
+                for (let i = 0; i < externalQueue.length; i++) {
+                    const { item, result } = externalQueue[i];
+                    _updateProgressToast(`Triggering external downloads… (${i + 1}/${externalQueue.length})`, completedBlobs, total);
+                    
+                    // Execute trigger if it's a function (soon-to-be-refactored behavior)
+                    if (typeof result.execute === 'function') {
+                        await result.execute();
+                    } else if (typeof result.trigger === 'function') {
+                        await result.trigger();
+                    }
+                    
+                    // Chrome spam-block delay
+                    await new Promise(r => setTimeout(r, 600));
+                }
+            }
+
+            _updateProgressToast(`Download complete ✓`, total, total, true);
+
         } catch (e) {
-            console.error(`${MODULE_TAG} Download error:`, e);
+            console.error(`${MODULE_TAG} Bulk download error:`, e);
             _updateProgressToast('Download failed — check console', total, total, true);
         }
     }
@@ -927,47 +1044,118 @@
 
     /**
      * Master conversion dispatcher.
-     * Returns { blob, filename } or null on failure.
+     * Acts as the primary routing dispatcher for the new pipelines.
+     * Returns { blob, filename } or { external: true, trigger: fn }
      */
-    async function _convertArtifact(artifact, format, notebookTitle) {
+    async function _convertArtifact(tile) {
         try {
-            const content = _extractArtifactContent(artifact);
-            const filename = _buildFilename(notebookTitle, artifact.title, format);
+            // 1. Call our surface scanner
+            const inventory = _inventoryAllArtifacts();
 
-            if (!format) {
-                // No format available — try to extract raw content as text
-                const blob = new Blob([content || '(No exportable content)'], { type: 'text/plain' });
-                return { blob, filename: _buildFilename(notebookTitle, artifact.title, 'txt') };
+            // 2. Find the specific metadata object
+            const el = tile.element || tile;
+            const meta = inventory.find(m => m.element === el);
+
+            // Robust artifactId extraction
+            let artifactId = (meta && meta.artifactId) ? meta.artifactId : null;
+            if (!artifactId && el) {
+                const uuidRegex = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+                const elsWithId = el.querySelectorAll('[id], [data-id]');
+                for (const c of elsWithId) {
+                    const match = (c.id || c.getAttribute('data-id') || '').match(uuidRegex);
+                    if (match) { artifactId = match[1]; break; }
+                }
+                if (!artifactId) {
+                    const match = el.innerHTML.match(uuidRegex);
+                    if (match) { artifactId = match[1]; }
+                }
             }
 
+            const format = tile.selectedFormat || (ARTIFACT_CONFIG[tile.type] && ARTIFACT_CONFIG[tile.type].formats[0]) || 'md';
+            const notebookTitle = typeof _getNotebookTitle === 'function' ? _getNotebookTitle() : 'NotebookLM';
+            const title = (meta && meta.title) || tile.title || 'Artifact';
+            const filename = typeof _buildFilename === 'function' ? _buildFilename(notebookTitle, title, format) : `${title}.${format}`;
+
+            // Priority 1: Flashcards via RPC
+            if (tile.type === 'flashcards') {
+                if (!artifactId) throw new Error("Missing Artifact ID");
+                const cards = await _fetchFlashcardsViaRpc(artifactId);
+                if (cards && Array.isArray(cards)) {
+                    if (format === 'txt') {
+                        const txtContent = cards.map(c => `Q: ${c.front || c.q || ''}\nA: ${c.back || c.a || ''}\n`).join('\n');
+                        return { blob: new Blob([txtContent], { type: 'text/plain' }), filename };
+                    } else {
+                        // default: csv
+                        let csvContent = 'Front,Back\n';
+                        csvContent += cards.map(c => {
+                            const front = (c.front || c.q || '').replace(/"/g, '""');
+                            const back = (c.back || c.a || '').replace(/"/g, '""');
+                            return `"${front}","${back}"`;
+                        }).join('\n');
+                        return { blob: new Blob([csvContent], { type: 'text/csv' }), filename };
+                    }
+                }
+                throw new Error("Failed to parse cards from response");
+            }
+
+            // Priority 2: Reports, Tables, and Slides via Google Docs pipeline
+            if (tile.type === 'reports' || tile.type === 'data_tables' || tile.type === 'slide_decks') {
+                if (!artifactId) throw new Error("Missing Artifact ID");
+                let docType = 'REPORT';
+                if (tile.type === 'data_tables') docType = 'TABLE';
+                if (tile.type === 'slide_decks') docType = 'SLIDES';
+                
+                const docResult = await _exportViaGoogleDocs(artifactId, title, docType);
+                if (docResult && docResult.external) {
+                    return { external: true }; // Orchestrator handles background script send
+                }
+                throw new Error("Failed to initiate external export");
+            }
+
+            // Priority 3: Media & Everything else that has a native "Download" button
+            // If it's something we cannot faithfully construct from DOM (like a flowchart png, video), 
+            // use the proxy trigger to click the native download button.
+            if (['mind_maps', 'media', 'infographics', 'quiz'].includes(tile.type)) {
+                return { 
+                    external: true, 
+                    filename: filename,
+                    trigger: async () => {
+                        await _toMedia(tile, format, title);
+                    }
+                };
+            }
+
+            // Priority 4: Pure Notes / Unknown (Fallback to DOM text extraction)
+            
+            const content = _extractArtifactContent(tile);
+
             switch (format) {
-                case 'csv':
-                    return await _toCsv(content, artifact, filename);
-                case 'txt':
-                    return await _toTxt(content, filename);
-                case 'md':
-                    return await _toMarkdown(content, filename);
-                case 'docx':
-                    return await _toDocx(content, artifact.title, filename);
-                case 'pdf':
-                    return await _toPdf(content, artifact.title, filename);
-                case 'xlsx':
-                    return await _toXlsx(content, artifact, filename);
-                case 'pptx':
-                    return await _toPptx(content, artifact.title, filename);
+                case 'csv': return await _toCsv(content, tile, filename);
+                case 'txt': return await _toTxt(content, filename);
+                case 'md': return await _toMarkdown(content, filename);
+                case 'docx': return await _toDocx(content, title, filename);
+                case 'pdf': return await _toPdf(content, title, filename);
+                case 'xlsx': return await _toXlsx(content, tile, filename);
+                case 'pptx': return await _toPptx(content, title, filename);
                 case 'wav':
                 case 'mp3':
                 case 'mp4':
-                    // For media, we trigger the native download via the UI
-                    return await _toMedia(artifact, format, filename);
+                    return {
+                        external: true,
+                        filename: filename,
+                        trigger: async () => await _toMedia(tile, format, filename)
+                    };
                 default:
-                    throw new Error(`Unknown format: ${format}`);
+                    const blob = new Blob([content || '(No exportable content)'], { type: 'text/plain' });
+                    return { blob, filename: `${title}.txt` };
             }
+
         } catch (err) {
-            console.error(`${MODULE_TAG} Conversion failed: ${artifact.title} → ${format}`, err);
+            console.error(`${MODULE_TAG} Conversion dispatcher failed:`, err);
             const api = window.NotebookLMFoldNest;
             if (api && api.showToast) {
-                api.showToast(`Could not export "${artifact.title.substring(0, 30)}" as ${(format || 'file').toUpperCase()}. Skipping.`);
+                const typeLabel = (ARTIFACT_CONFIG[tile.type] && ARTIFACT_CONFIG[tile.type].label) || tile.type;
+                api.showToast(`Failed to fetch ${typeLabel}: ${err.message}`);
             }
             return null;
         }
@@ -1330,6 +1518,149 @@
     // =========================================================================
 
     /**
+     * Phase 2: Core API Handlers for FoldNest.
+     */
+    async function _downloadFromContribution(token, filename, format) {
+        try {
+            const url = `https://contribution.usercontent.google.com/download?c=${token}&filename=${filename}.${format}&authuser=0`;
+            const response = await fetch(url, { credentials: 'include' });
+            
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    throw new Error('AUTH_REQUIRED');
+                }
+                throw new Error(`HTTP Error ${response.status} when downloading ${filename}.${format}`);
+            }
+            
+            console.debug(`[FoldNest Download] Successfully fetched ${filename}.${format}`);
+            return await response.blob();
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    /**
+     * Phase 2: Core API Handlers for FoldNest.
+     * Attempts to fetch media directly. If CORS blocks it, falls back to a hidden anchor download.
+     */
+    async function _downloadMedia(mediaUrl, filename) {
+        try {
+            const response = await fetch(mediaUrl, { credentials: 'include' });
+            if (!response.ok) {
+                throw new Error(`HTTP Error ${response.status} when fetching media`);
+            }
+            console.debug(`[FoldNest Download] Successfully fetched media Blob for ${filename}`);
+            return await response.blob();
+        } catch (error) {
+            console.warn(`[FoldNest Download] CORS/Fetch error for ${filename}, falling back to native anchor download.`, error);
+            
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = mediaUrl;
+            a.download = filename;
+            
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            
+            return { external: true };
+        }
+    }
+
+    /**
+     * Phase 3: Complex RPC Handlers.
+     * Exports Reports/Tables to Google Docs/Sheets and sends ID to background script.
+     */
+    async function _exportViaGoogleDocs(artifactId, title, docType) {
+        try {
+            console.debug(`[FoldNest Export] Starting batchexecute export for ${docType}`);
+            const isReport = docType === 'REPORT';
+            const isSlides = docType === 'SLIDES';
+            const rpcid = (docType === 'TABLE') ? 'Krh3pd' : 'ciyUvf';
+            
+            const { bl, at } = await _getSessionParams();
+            const url = `/_/LabsTailwindUi/data/batchexecute?rpcids=${rpcid}&bl=${bl}&at=${at}`;
+            
+            // Use JSON.stringify to safely encode quotes in the title
+            const innerStr = JSON.stringify([null, artifactId, null, title, 2]);
+            const payloadArr = [[[rpcid, innerStr, null, "generic"]]];
+            const reqData = `f.req=${encodeURIComponent(JSON.stringify(payloadArr))}`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Same-Domain': '1',
+                    'X-Goog-AuthUser': '0'
+                },
+                body: reqData,
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error(`[FoldNest API Error] _exportViaGoogleDocs failed: ${response.status} ${response.statusText}`, errText);
+                console.error(`[FoldNest API Error] URL was: ${url}`);
+                console.error(`[FoldNest API Error] Request payload:`, reqData);
+                throw new Error(`HTTP Error ${response.status}`);
+            }
+
+            const responseText = await response.text();
+            
+            const parsedArrays = _parseBatchexecute(responseText);
+            let innerPayloadStr = null;
+            
+            for (const arr of parsedArrays) {
+                if (arr && arr[0] && typeof arr[0][2] === 'string') {
+                    innerPayloadStr = arr[0][2];
+                    break;
+                }
+            }
+
+            if (!innerPayloadStr) {
+                console.error("[FoldNest Export] No payload found in Docs response:", responseText.substring(0, 500));
+                throw new Error('Invalid batchexecute response or missing Docs payload');
+            }
+            
+            // Extract the generated Google Docs/Sheets ID
+            const match = innerPayloadStr.match(/"([a-zA-Z0-9-_]{35,})"/);
+            if (!match) {
+                throw new Error('Could not find Google Docs/Sheets ID in response');
+            }
+            const docId = match[1];
+
+            let format, extUrl;
+            if (isReport) {
+                format = 'docx';
+                extUrl = `https://docs.google.com/document/d/${docId}/export?format=${format}`;
+            } else if (isSlides) {
+                format = 'pptx';
+                extUrl = `https://docs.google.com/presentation/d/${docId}/export/pptx`;
+            } else {
+                format = 'xlsx';
+                extUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=${format}`;
+            }
+            
+            const exportFilename = `${title}.${format}`;
+
+            console.debug(`[FoldNest Export] Triggering background download for doc ID: ${docId}`);
+            
+            // CRITICAL STEP: Send to background script
+            chrome.runtime.sendMessage({
+                action: 'downloadUrl',
+                url: extUrl,
+                filename: exportFilename
+            });
+
+            return { external: true };
+
+        } catch (error) {
+            console.error(`[FoldNest Export] Export failed for ${title}:`, error);
+            throw error;
+        }
+    }
+
+    /**
      * Triggers a file download using chrome.downloads API if available,
      * with <a download> fallback.
      */
@@ -1401,15 +1732,18 @@
             menuBtn.click();
 
             // 3. Wait for the menu to appear in the DOM
-            // We use a small delay and then a mutation check or just a retry loop
-            await new Promise(r => setTimeout(r, 400));
+            // Increase delay slightly to ensure DOM render of M3 menus
+            await new Promise(r => setTimeout(r, 800));
 
             // 4. Find the "Download" menu item
-            const menuItems = Array.from(document.querySelectorAll('.mat-menu-item, [role="menuitem"], .mat-mdc-menu-item'));
+            const menuItems = Array.from(document.querySelectorAll('.mat-menu-item, [role="menuitem"], .mat-mdc-menu-item, .mdc-list-item, button, span, a'));
             const downloadBtn = menuItems.find(item => {
+                const isOverlay = item.closest('.cdk-overlay-container, .mat-mdc-menu-panel, .mdc-menu-surface, [role="menu"]');
+                if (!isOverlay) return false;
+                
                 const txt = (item.innerText || item.textContent || '').toLowerCase();
-                const icon = (item.querySelector('mat-icon')?.innerText || '').toLowerCase();
-                return txt.includes('download') || icon === 'save_alt' || icon === 'download';
+                const icon = (item.querySelector('mat-icon, .material-symbols-outlined, svg')?.innerText || '').toLowerCase();
+                return txt.includes('download') || icon.includes('save_alt') || icon.includes('download');
             });
 
             if (!downloadBtn) {
@@ -1598,6 +1932,233 @@
                 resolve(null);
             }
         });
+    }
+
+    // =========================================================================
+    // RPC FETCHERS
+    // =========================================================================
+
+    /**
+     * Extracts Build Label (bl) and Action Token (at) from the page scripts.
+     */
+    async function _getSessionParams() {
+        let bl = '';
+        let at = '';
+        
+        // Strategy 1: Page context injection (safest way to read WIZ_global_data)
+        try {
+            const data = await new Promise((resolve) => {
+                const scriptId = 'fn-session-extractor-' + Date.now();
+                const script = document.createElement('script');
+                script.id = scriptId;
+                script.textContent = `
+                    (function() {
+                        try {
+                            const data = window.WIZ_global_data || window.IJ_values || {};
+                            const bl = data.bl || (data.cfb2h ? data.cfb2h.bl : '') || '';
+                            const at = data.SNlM0e || '';
+                            document.getElementById('${scriptId}').setAttribute('data-wiz', JSON.stringify({bl, at}));
+                        } catch(e) {}
+                    })();
+                `;
+                document.documentElement.appendChild(script);
+                setTimeout(() => {
+                    try {
+                        const raw = document.getElementById(scriptId)?.getAttribute('data-wiz');
+                        script.remove();
+                        if (raw) resolve(JSON.parse(raw));
+                        else resolve({bl: '', at: ''});
+                    } catch(e) {
+                        resolve({bl: '', at: ''});
+                    }
+                }, 100);
+            });
+            
+            bl = data.bl;
+            at = data.at;
+        } catch(e) {}
+        
+        // Strategy 2: Regex fallback
+        if (!at || !bl) {
+            const html = document.documentElement.innerHTML;
+            if (!at) {
+                const atMatch = html.match(/"SNlM0e"\s*:\s*"([^"]+)"/);
+                if (atMatch) at = atMatch[1];
+            }
+            if (!bl) {
+                const blMatch = html.match(/"(boq_[a-zA-Z0-9_\-.]+)"/);
+                if (blMatch) bl = blMatch[1];
+            }
+        }
+        
+        if (!bl) bl = 'boq_labstailwinduiserver_20240401.00_p0'; // Final fallback
+        
+        console.debug(`[FoldNest Session Debug] Extracted bl: ${bl}`);
+        console.debug(`[FoldNest Session Debug] Extracted at: ${at ? 'Present (' + at.substring(0, 5) + '...)' : 'MISSING'}`);
+        
+        return { bl, at };
+    }
+
+    /**
+     * Safely parses Google's chunked batchexecute responses.
+     */
+    function _parseBatchexecute(text) {
+        const results = [];
+        const lines = text.split('\n');
+        for (let line of lines) {
+            line = line.trim();
+            if (line.startsWith('[')) {
+                try {
+                    results.push(JSON.parse(line));
+                } catch (e) {}
+            }
+        }
+        return results;
+    }
+
+    /**
+     * Fetches flashcards directly from the NotebookLM backend via RPC.
+     * Makes two sequential POST requests to batchexecute.
+     */
+    async function _fetchFlashcardsViaRpc(artifactId) {
+        console.debug(`[FoldNest Flashcards] Starting RPC fetch for ${artifactId}`);
+
+        const notebookIdMatch = window.location.pathname.match(/\/notebook\/([^/]+)/);
+        const notebookId = notebookIdMatch ? notebookIdMatch[1] : '';
+
+        const { bl, at } = await _getSessionParams();
+        console.debug(`[FoldNest Flashcards] Config: notebookId=${notebookId}, bl=${bl}`);
+
+        const baseUrl = '/_/LabsTailwindUi/data/batchexecute';
+        const queryParams = `source-path=/notebook/${notebookId}&bl=${bl}&at=${at}&hl=en&soc-app=1&soc-platform=1&soc-device=1&rt=c`;
+
+        try {
+            // REQUEST 1 - Prepare artifact
+            console.debug(`[FoldNest Flashcards] Executing Request 1 (v9rmvd)`);
+            const req1Body = new URLSearchParams();
+            const payload1 = `[[["v9rmvd","[\\"${artifactId}\\",[2,null,null,[1,null,null,null,null,null,null,null,null,null,[1]],[[1,4,2,3,6,5]]]]",null,"generic"]]]`;
+            req1Body.append('f.req', payload1);
+
+            const res1 = await fetch(`${baseUrl}?rpcids=v9rmvd&${queryParams}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Same-Domain': '1',
+                    'X-Goog-AuthUser': '0'
+                },
+                body: req1Body
+            });
+
+            if (!res1.ok) {
+                const errText1 = await res1.text();
+                console.error(`[FoldNest API Error] Flashcards Req 1 failed: ${res1.status} ${res1.statusText}`, errText1);
+                console.error(`[FoldNest API Error] URL was: ${baseUrl}?rpcids=v9rmvd&${queryParams}`);
+                console.error(`[FoldNest API Error] Payload was:`, payload1);
+                throw new Error(`Request 1 failed with status: ${res1.status}`);
+            }
+
+            // REQUEST 2 - Fetch card data
+            console.debug(`[FoldNest Flashcards] Executing Request 2 (ulBSjf)`);
+            const req2Body = new URLSearchParams();
+            const payload2 = `[[["ulBSjf","[[2,null,null,[1,null,null,null,null,null,null,null,null,null,[1]],[[1,4,2,3,6,5]]],\\"${artifactId}\\"]",null,"generic"]]]`;
+            req2Body.append('f.req', payload2);
+
+            const res2 = await fetch(`${baseUrl}?rpcids=ulBSjf&${queryParams}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Same-Domain': '1',
+                    'X-Goog-AuthUser': '0'
+                },
+                body: req2Body
+            });
+
+            if (!res2.ok) {
+                const errText2 = await res2.text();
+                console.error(`[FoldNest API Error] Flashcards Req 2 failed: ${res2.status} ${res2.statusText}`, errText2);
+                console.error(`[FoldNest API Error] URL was: ${baseUrl}?rpcids=ulBSjf&${queryParams}`);
+                console.error(`[FoldNest API Error] Payload was:`, payload2);
+                throw new Error(`Request 2 failed with status: ${res2.status}`);
+            }
+
+            const rawText = await res2.text();
+            console.debug(`[FoldNest Flashcards] Request 2 raw response length: ${rawText.length}`);
+
+            // Parse response safely using chunk parser
+            const parsedArrays = _parseBatchexecute(rawText);
+            let innerArr = null;
+
+            for (const arr of parsedArrays) {
+                if (arr && arr[0] && typeof arr[0][2] === 'string') {
+                    try {
+                        innerArr = JSON.parse(arr[0][2]);
+                        break;
+                    } catch (e) {}
+                }
+            }
+
+            if (!innerArr) {
+                console.error("[FoldNest Flashcards] No valid payload found:", rawText.substring(0, 500));
+                throw new Error('Unexpected batchexecute response structure');
+            }
+
+            const cards = [];
+            let cardList = null;
+
+            const searchForCardList = (node) => {
+                if (Array.isArray(node)) {
+                    // Filter children that are arrays containing at least 2 strings
+                    const validCards = node.filter(child => {
+                        if (!Array.isArray(child)) return false;
+                        const strCount = child.filter(v => typeof v === 'string' && v.trim().length > 0).length;
+                        return strCount >= 2;
+                    });
+
+                    // If more than 0 cards found, and they make up at least some portion of the array
+                    if (validCards.length > 0) {
+                        cardList = validCards; // Use the filtered valid cards array directly!
+                        return;
+                    }
+                    
+                    for (const child of node) {
+                        if (!cardList) searchForCardList(child);
+                    }
+                }
+            };
+
+            searchForCardList(innerArr);
+
+            if (cardList) {
+                for (const cardArr of cardList) {
+                    const strings = cardArr.filter(v => typeof v === 'string' && v.trim().length > 0);
+                    if (strings.length >= 3) {
+                        cards.push({ front: strings[1], back: strings[2] });
+                    } else if (strings.length >= 2) {
+                        cards.push({ front: strings[0], back: strings[1] });
+                    }
+                }
+            } else {
+                console.debug(`[FoldNest Flashcards] Could not definitively find card list node, using broad heuristic.`);
+                const fallbackSearch = (arr) => {
+                    if (!Array.isArray(arr)) return;
+                    const strs = arr.filter(v => typeof v === 'string' && v.trim().length > 0);
+                    if (strs.length >= 2 && !arr.some(Array.isArray)) {
+                        if (strs.length >= 3) cards.push({ front: strs[1], back: strs[2] });
+                        else cards.push({ front: strs[0], back: strs[1] });
+                    } else {
+                        arr.forEach(fallbackSearch);
+                    }
+                };
+                fallbackSearch(innerArr);
+            }
+
+            console.debug(`[FoldNest Flashcards] Extracted ${cards.length} cards`);
+            return cards;
+
+        } catch (e) {
+            console.error(`[FoldNest Flashcards] Error during RPC fetch:`, e);
+            throw e;
+        }
     }
 
     // =========================================================================
