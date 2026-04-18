@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // DIAGNOSTIC: Verify content script injection
 // ============================================================================
 console.log('[FoldNest] Content script loaded at:', new Date().toISOString());
@@ -308,6 +308,7 @@ const DEFAULT_DASHBOARD_STATE = {
 let dashboardState = null;
 let isDashboardMode = false;
 let dashboardObserver = null;
+let isDashboardFirstLoad = true;
 
 // --- GRACEFUL DEGRADATION SYSTEM ---
 const featureStatus = {
@@ -4467,6 +4468,32 @@ function hideFloatingButton(e) {
 // =============================================================================
 
 /**
+ * BUG #4 FIX: Dashboard folders not rendering on FIRST LOAD (cold start)
+ * Problem: On fresh Chrome launch → notebooklm.google.com, 
+ *          renderDashboardTree() runs before the dashboard container exists.
+ * Solution: Multiple safety nets + forced re-render after SPA settles.
+ */
+function forceDashboardFirstLoadRender() {
+    if (!isDashboardMode || !dashboardState) return;
+
+    const dashboardRoot = document.getElementById('plugin-dashboard-root');
+    const treeMount = document.getElementById('dashboard-tree-mount');
+
+    // Case 1: Root exists but tree is empty
+    if (dashboardRoot && (!treeMount || treeMount.children.length === 0)) {
+        if (DEBUG_MODE) console.log('[NotebookLM FoldNest] First-load render triggered (safety net)');
+        renderDashboardTree();
+        processDashboardNotebooks();
+    }
+    
+    // Case 2: Root doesn't exist yet — trigger organizer which finds anchor and injects
+    else if (!dashboardRoot) {
+        if (DEBUG_MODE) console.log('[NotebookLM FoldNest] Dashboard root not found yet, triggering organizer safety check...');
+        runDashboardOrganizer();
+    }
+}
+
+/**
  * Initialize dashboard mode - load state and inject UI
  */
 function initDashboard() {
@@ -4511,7 +4538,16 @@ function initDashboard() {
             }
 
             startDashboardObserver();
-            // Inject CSS styles if not already present (helper function)
+            
+            // BUG #4 FIX: Dashboard First Load Safety Net
+            // Problem: On fresh Chrome launch, the dashboard organizer may run too early.
+            // Solution: Multiple safety nets + forced re-render attempts.
+            if (DEBUG_MODE) console.log('[NotebookLM FoldNest] Setting up first-load dashboard safety net...');
+            setTimeout(forceDashboardFirstLoadRender, 600);
+            setTimeout(forceDashboardFirstLoadRender, 1500);
+            setTimeout(forceDashboardFirstLoadRender, 3000);
+            
+            // Original call
             setTimeout(runDashboardOrganizer, INIT_DELAY_MS);
         });
     } catch (e) {
@@ -4591,11 +4627,16 @@ function startDashboardObserver() {
         });
 
         // Optimization (Part 1): Narrow scope if we have a grid container
-        if (gridContainer) {
+        if (gridContainer && !isDashboardFirstLoad) {
             dashboardObserver.observe(gridContainer, { childList: true, subtree: false });
         } else {
-            // Fallback to broader scope
-            dashboardObserver.observe(targetContainer, { childList: true, subtree: true });
+            // Fallback to broader scope or first load (watch attributes for SPA transitions)
+            dashboardObserver.observe(targetContainer, { 
+                childList: true, 
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class', 'style', 'data-loaded']
+            });
         }
 
         console.debug('[NotebookLM FoldNest] Dashboard observer started');
@@ -4637,6 +4678,9 @@ function runDashboardOrganizer() {
 
         // ALWAYS process notebooks (container might already exist from previous run)
         processDashboardNotebooks();
+
+        // Successful run, subsequent mutations can use narrower scope
+        isDashboardFirstLoad = false;
 
     } catch (e) {
         console.debug('[NotebookLM FoldNest] Dashboard organizer error:', e.message);
@@ -4839,7 +4883,10 @@ function renderDashboardTreeIfChanged() {
 function renderDashboardTree() {
     try {
         const mount = document.getElementById('dashboard-tree-mount');
-        if (!mount) return;
+        if (!mount) {
+            if (DEBUG_MODE) console.warn('[NotebookLM FoldNest] renderDashboardTree called but #dashboard-tree-mount not found yet');
+            return;
+        }
 
         // CRITICAL FIX: Preserve existing notebook proxies before rebuilding tree
         const proxyCache = new Map(); // folderId -> array of proxy elements
