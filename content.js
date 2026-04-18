@@ -6220,17 +6220,42 @@ function enterDashboardBulkSelect(triggerRow) {
 
     rows.forEach(row => {
         if (row.querySelector('.plugin-bulk-checkbox-wrap')) return;
+
         const wrap = document.createElement('label');
         wrap.className = 'plugin-bulk-checkbox-wrap';
+        wrap.style.cssText = 'display:flex; align-items:center; gap:8px; cursor:pointer;';
+
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.className = 'plugin-bulk-checkbox';
         cb.onclick = (e) => e.stopPropagation();
-        if (row === triggerRow) cb.checked = true;
-        wrap.appendChild(cb);
 
-        const firstCell = row.querySelector('td');
-        if (firstCell) firstCell.insertBefore(wrap, firstCell.firstChild);
+        if (row === triggerRow) cb.checked = true;
+
+        // === NEW: Add notebook title next to checkbox ===
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'bulk-note-title';
+        titleSpan.textContent = getNotebookTitleFromCard(row) || 'Untitled Notebook';
+        titleSpan.style.cssText = `
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--plugin-text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 380px;
+            flex: 1;
+            line-height: 1.4;
+            padding-right: 8px;
+        `;
+
+        wrap.appendChild(cb);
+        wrap.appendChild(titleSpan);
+
+        const firstCell = row.querySelector('td:first-child, .mat-column-icon, .mat-mdc-cell:first-child');
+        if (firstCell) {
+            firstCell.insertBefore(wrap, firstCell.firstChild);
+        }
     });
 
     showBulkActionBar(rows);
